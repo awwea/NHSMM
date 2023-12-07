@@ -1,4 +1,5 @@
 #TODO: this module might be redudant, consider removing it
+#TODO: this init method is too confusing, supply matrix, states, and emissions or their combination and inheritance together 
 from abc import ABC, abstractmethod, abstractproperty
 from typing import Optional, Union, Sequence, TypeVar, Tuple
 
@@ -10,7 +11,6 @@ from .utils import SeedGenerator, print_table, states_names, sample_prob_matrix,
 torch.set_printoptions(precision=4, profile="full")
 MAT_OPS = TypeVar('MAT_OPS', bound=Union['StochasticMatrix', np.ndarray, torch.Tensor])
 
-#TODO: this init method is too confusing, supply matrix, states, and emissions or their combination and inheritance together 
 class StochasticMatrix(ABC):
     """ 
     Stochastic Matrix

@@ -1,119 +1,10 @@
 import torch
-from typing import Optional, Dict, Literal, Tuple, List
-from abc import ABC, abstractproperty, abstractmethod
-from torch.distributions import Distribution, MixtureSameFamily # type: ignore
+from typing import Optional, Literal, Tuple, List
 from sklearn.cluster import KMeans # type: ignore
 
+from .base_mixture import MixtureEmissions # type: ignore
 from ..stochastic_matrix import WeightsMatrix # type: ignore
-from ..utils import ContextualVariables, validate_means, validate_covars, fill_covars, log_normalize # type: ignore
-
-
-class MixtureEmissions(ABC):
-    """
-    Mixture model for HMM emissions. This class is an abstract base class for Gaussian, Poisson and other mixture models.
-    """
-
-    def __init__(self, 
-                 n_dims: int,
-                 n_components: int,
-                 n_features: int,
-                 alpha: float = 1.0,
-                 init_weights: bool = True,
-                 seed: Optional[int] = None,
-                 device: Optional[torch.device] = None):
-        
-        self.n_dims = n_dims
-        self.n_components = n_components
-        self.n_features = n_features
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
-
-        if init_weights:
-            self._weights = self.sample_weights(alpha, seed)
-
-    @property
-    def weights(self) -> WeightsMatrix:
-        try:
-            return self._weights
-        except AttributeError:
-            raise AttributeError('Weights are not initialized')
-
-    @weights.setter
-    def weights(self, vector):
-        assert (self.n_dims, self.n_components) == vector.shape, 'Matrix dimensions differ from HMM model'
-        if isinstance(vector, WeightsMatrix):
-            self._weights = vector
-        elif isinstance(vector, torch.Tensor):
-            self._weights = WeightsMatrix(n_states=self.n_dims, 
-                                          n_components=self.n_components,
-                                          matrix=vector,
-                                          device=self.device)
-        else:
-            raise NotImplementedError(f'Expected torch Tensor or WeightsMatrix object, got {type(vector)}')
-        
-    @property
-    def mixture_pdf(self) -> MixtureSameFamily:
-        """Return the emission distribution for Gaussian Mixture Distribution."""
-        return MixtureSameFamily(mixture_distribution = self.weights._dist,
-                                 component_distribution = self.pdf)
-
-    @abstractproperty
-    def pdf(self) -> Distribution:
-        """Return the emission distribution of Mixture."""
-        pass
-
-    @abstractproperty
-    def params(self) -> Dict[str, torch.Tensor]:
-        """Return the parameters of the Mixture."""
-        pass
-
-    @abstractmethod
-    def _update_params(self, 
-                       X:List[torch.Tensor], 
-                       resp:List[torch.Tensor], 
-                       theta:Optional[ContextualVariables]=None) -> None:
-        """Update the parameters of the Mixture."""
-        pass 
-    
-    def sample_weights(self, 
-                       alpha:float, 
-                       seed:Optional[int]) -> WeightsMatrix:
-        """Sample the weights for the mixture."""
-        return WeightsMatrix(n_states=self.n_dims,
-                             n_components=self.n_components,
-                             rand_seed=seed,
-                             alpha=alpha,
-                             device=self.device)    
-
-    def map_emission(self, 
-                     x:torch.Tensor) -> torch.Tensor:
-        x_batched = x.unsqueeze(1).expand(-1,self.n_dims,-1)
-        return self.mixture_pdf.log_prob(x_batched)
-    
-    def _compute_responsibilities(self, X:List[torch.Tensor]) -> List[torch.Tensor]:
-        """Compute the responsibilities for each component."""
-        resp_vec = []
-        for seq in X:
-            n_observations = seq.size(dim=0)
-            log_responsibilities = torch.zeros(size=(self.n_dims,self.n_components,n_observations), 
-                                               dtype=torch.float64, 
-                                               device=self.device)
-
-            for t in range(n_observations):
-                log_responsibilities[:,:,t] = log_normalize(self.weights.matrix + self.pdf.log_prob(seq[t]),1)
-
-            resp_vec.append(log_responsibilities)
-        
-        return resp_vec
-    
-    def _compute_weights(self, posterior:List[torch.Tensor]) -> torch.Tensor:
-        log_weights = torch.zeros(size=(self.n_dims,self.n_components),
-                                  dtype=torch.float64, 
-                                  device=self.device)
-
-        for p in posterior:
-            log_weights += p.exp().sum(-1)
-        
-        return log_normalize(log_weights.log(),1)
+from ..utils import ContextualVariables, validate_means, validate_covars, fill_covars # type: ignore
     
 
 class GaussianMixtureEmissions(MixtureEmissions):
@@ -169,7 +60,7 @@ class GaussianMixtureEmissions(MixtureEmissions):
         self.covariance_type = covariance_type
         
         if params_init:
-            self._means, self._covs = self.sample_emissions_params()
+            self._weights, self._means, self._covs = self.sample_emissions_params(seed=seed)
             
     @property
     def means(self) -> torch.Tensor:
@@ -202,22 +93,23 @@ class GaussianMixtureEmissions(MixtureEmissions):
     
     def sample_emissions_params(self, 
                                 X:Optional[torch.Tensor]=None,
-                                seed:Optional[int]=None) -> Tuple[torch.Tensor, torch.Tensor]:
+                                seed:Optional[int]=None) -> Tuple[WeightsMatrix,torch.Tensor,torch.Tensor]:
         """Initialize the emission parameters."""
+        new_weights = self.sample_weights(seed)
         if X is not None:
             means = self._sample_kmeans(X,seed) if self.k_means else X.mean(dim=0,keepdim=True).expand(self.n_dims,self.n_components,-1).clone()
             centered_data = X - X.mean(dim=0)
             covs = (torch.mm(centered_data.T, centered_data) / (X.shape[0] - 1)).expand(self.n_dims,self.n_components,-1,-1).clone()
         else:
             means = torch.zeros(size=(self.n_dims, self.n_components, self.n_features), 
-                                    dtype=torch.float64, 
-                                    device=self.device)
+                                dtype=torch.float64, 
+                                device=self.device)
         
             covs = self.min_covar + torch.eye(n=self.n_features, 
                                               dtype=torch.float64,
                                               device=self.device).expand((self.n_dims, self.n_components, self.n_features, self.n_features)).clone()
 
-        return means, covs
+        return new_weights, means, covs
 
     def _update_params(self,X,resp,theta=None):
         self._weights.matrix.copy_(self._compute_weights(resp))

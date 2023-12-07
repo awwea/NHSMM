@@ -43,7 +43,7 @@ class CategoricalEmissions:
         self.seed = seed
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
         if init_params:
-            self._emission_matrix = self.sample_emissions_params(seed=self.seed)
+            self._emission_matrix = self.sample_emissions_params(seed=seed)
 
     def __str__(self):
         return f'CategoricalEmissions(n_dims={self.n_dims}, n_features={self.n_features})'

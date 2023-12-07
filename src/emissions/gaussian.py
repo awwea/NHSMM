@@ -119,8 +119,8 @@ class GaussianEmissions:
                        seed:Optional[int]=None) -> torch.Tensor:
         """Sample cluster means from K Means algorithm"""
         k_means_alg = KMeans(n_clusters=self.n_dims, 
-                               random_state=seed, 
-                               n_init="auto").fit(X)
+                             random_state=seed, 
+                             n_init="auto").fit(X)
         return torch.from_numpy(k_means_alg.cluster_centers_).reshape(self.n_dims,self.n_features)
 
     def _compute_means(self,
@@ -146,29 +146,14 @@ class GaussianEmissions:
 
         return new_mean / denom
     
-    # def _contextual_matrix(self,
-    #                        seq:torch.Tensor, 
-    #                        gamma:torch.Tensor, 
-    #                        theta:torch.Tensor) -> torch.Tensor:
-    #     """Compute the contextualized means for each hidden state."""
-    #     # resulting shape of nominator should be: (n_states, n_features, n_context)e
-    #     # First shape is (n_dims, time, n_feautures) and the second shape is (n_dims, n_context, n_samples)
-    #     # weighted_X = gamma.unsqueeze(dim=-1).expand(-1, -1, self.n_features) * seq
-    #     # nominator = (weighted_X.transpose(-2,-1) @ theta.T.expand(self.n_dims,-1,-1)).sum(dim=-1)
-    #     test = theta.unsqueeze(dim=1).expand(-1,self.n_dims,-1) * gamma
-    #     nominator = test.unsqueeze(dim=-1).expand(-1,-1,-1,self.n_features) * seq
-    #     denom = (gamma @ (theta.T @ theta)).sum(dim=-1, keepdim=True)
-    #     # resulting shape of division shoudl be: (n_states, n_features, n_context) but wtf am i suppose to do with time dependence?
-    #     return nominator / denom
-    
     def _compute_covs(self, 
                      X:List[torch.Tensor],
                      gamma:List[torch.Tensor],
                      theta:Optional[ContextualVariables]) -> torch.Tensor:
         """Compute the covariances for each component."""
         new_covs = torch.zeros(size=(self.n_dims,self.n_features, self.n_features), 
-                           dtype=torch.float64, 
-                           device=self.device)
+                               dtype=torch.float64, 
+                               device=self.device)
         
         denom = torch.zeros(size=(self.n_dims,1,1), 
                             dtype=torch.float64, 

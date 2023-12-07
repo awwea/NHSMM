@@ -71,8 +71,8 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
         """Returns the degrees of freedom of the model."""
         return self.n_states ** 2 + self.n_states * self.n_features - 1
     
-    def check_sequence(self,sequence,lengths=None):
-        return validate_sequence(sequence,True,self.n_features,lengths)
+    def check_sequence(self,sequence):
+        return validate_sequence(sequence,True,self.n_features)
         
     def map_emission(self,emission):
         return CategoricalEmissions.map_emission(self,emission)

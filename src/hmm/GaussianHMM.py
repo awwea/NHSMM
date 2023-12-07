@@ -1,7 +1,7 @@
 import torch
 from typing import Optional, Literal
 from .BaseHMM import BaseHMM # type: ignore
-from ..emissions.mixtures import GaussianMixtureEmissions # type: ignore
+from ..emissions.gaussian_mix import GaussianMixtureEmissions # type: ignore
 from ..emissions import GaussianEmissions # type: ignore
 from ..utils import validate_sequence # type: ignore
 
@@ -50,8 +50,7 @@ class GaussianHMM(BaseHMM, GaussianEmissions):
 
         BaseHMM.__init__(self,n_states,params_init,alpha,seed,device)
         
-        GaussianEmissions.__init__(self,n_states,n_features,params_init,k_means,covariance_type,
-                                   min_covar,seed,device)
+        GaussianEmissions.__init__(self,n_states,n_features,params_init,k_means,covariance_type,min_covar,seed,device)
                     
     def __str__(self):
         return f'GaussianHMM(n_states={self.n_states}, n_features={self.n_features})'
@@ -86,8 +85,8 @@ class GaussianHMM(BaseHMM, GaussianEmissions):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
         GaussianEmissions._update_emissions_params(self,X,gamma,theta)
 
-    def check_sequence(self, sequence, lengths=None):
-        return validate_sequence(sequence, False, self.n_features, lengths)
+    def check_sequence(self, sequence):
+        return validate_sequence(sequence, False, self.n_features)
     
     def map_emission(self, emission):
         return GaussianEmissions.map_emission(self,emission)
@@ -141,8 +140,7 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
 
         BaseHMM.__init__(self,n_states,params_init,alpha,seed,device)
         
-        GaussianMixtureEmissions.__init__(self,n_states,n_components,n_features,params_init,k_means,alpha,covariance_type,
-                                          min_covar,seed,device)
+        GaussianMixtureEmissions.__init__(self,n_states,n_components,n_features,params_init,k_means,alpha,covariance_type, min_covar,seed,device)
                     
     def __str__(self):
         return f'GaussianMixtureHMM(n_states={self.n_states}, n_features={self.n_features}, n_components={self.n_components})'
@@ -177,9 +175,6 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
     def dof(self):
         return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self.means.numel() + self.covs.numel() 
 
-    def check_sequence(self,sequence,lengths=None):
-        return validate_sequence(sequence, False, self.n_features, lengths)
-
     def _update_B_params(self,X,log_gamma,theta=None):
         posterior_vec = []
         resp_vec = GaussianMixtureEmissions._compute_responsibilities(self,X)
@@ -187,6 +182,9 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
             posterior_vec.append(torch.exp(resp + gamma_val.T.unsqueeze(1)))
 
         GaussianMixtureEmissions._update_params(self,X,posterior_vec,theta)
+
+    def check_sequence(self,sequence):
+        return validate_sequence(sequence, False, self.n_features)
     
     def map_emission(self, emission):
         return GaussianMixtureEmissions.map_emission(self,emission)

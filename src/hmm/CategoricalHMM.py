@@ -52,7 +52,7 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
             'B': self.emission_matrix.matrix
         }
 
-    @property    
+    @property
     def n_fit_params(self):
         return {
             'initial_states': self.n_states,

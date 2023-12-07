@@ -131,9 +131,7 @@ class BaseHSMM(ABC):
         pass
 
     @abstractmethod
-    def check_sequence(self, 
-                       X:torch.Tensor, 
-                       lengths:Optional[Sequence[int]]=None) -> torch.Tensor:
+    def check_sequence(self, X:torch.Tensor) -> torch.Tensor:
         """Check if the sequence is valid, encode, transform if necessary."""
         pass
 
