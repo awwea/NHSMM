@@ -2,10 +2,11 @@ from typing import Optional, Literal, Tuple, List
 from sklearn.cluster import KMeans # type: ignore
 import torch
 
+from .base_emiss import BaseEmission # type: ignore
 from ..utils import ContextualVariables, validate_means, validate_covars, fill_covars # type: ignore
 
 
-class GaussianEmissions:
+class GaussianEmissions(BaseEmission):
     """
     Gaussian Distribution for HMM emissions.    
     
@@ -49,14 +50,11 @@ class GaussianEmissions:
                  seed: Optional[int] = None,
                  device: Optional[torch.device] = None):
         
-        self.n_dims = n_dims
-        self.n_features = n_features
+        super().__init__(n_dims, n_features, params_init, seed, device)
+
         self.min_covar = min_covar
         self.covariance_type = covariance_type
-        self.seed = seed
         self.k_means = k_means
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
-
         if params_init:
             self._means, self._covs = self.sample_emissions_params()
             
@@ -166,7 +164,7 @@ class GaussianEmissions:
             else:
                 gamma_expanded = gamma_val.T.unsqueeze(-1)
                 diff = seq.expand(self.n_dims,-1,-1) - self.means.unsqueeze(1)
-                new_covs += torch.transpose(diff * gamma_expanded,1,2) @ diff
+                new_covs += torch.transpose(gamma_expanded * diff,1,2) @ diff
                 denom += torch.sum(gamma_expanded,dim=-2,keepdim=True)
 
         new_covs /= denom

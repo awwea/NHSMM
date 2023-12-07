@@ -39,7 +39,7 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
         
         BaseHMM.__init__(self,n_states,params_init,alpha,seed,device)
         
-        CategoricalEmissions.__init__(self, n_states, n_features,params_init,alpha,seed,device)
+        CategoricalEmissions.__init__(self,n_states,n_features,params_init,alpha,seed,device)
         
     def __str__(self):
         return f'CategoricalHMM(n_states={self.n_states}, n_feautures={self.n_features})'

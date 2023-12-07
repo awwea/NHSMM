@@ -102,7 +102,7 @@ class BaseHMM(ABC):
         pass
 
     @abstractmethod
-    def map_emission(self, emission:torch.Tensor) -> torch.Tensor:
+    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
         """Get emission probabilities for a given sequence of observations."""
         pass
 

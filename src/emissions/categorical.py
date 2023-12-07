@@ -1,10 +1,13 @@
 import torch
 from torch.distributions import Categorical # type: ignore
 from typing import Optional, List
+
+from .base_emiss import BaseEmission # type: ignore
 from ..stochastic_matrix import EmissionMatrix # type: ignore
 from ..utils import ContextualVariables, log_normalize # type: ignore
 
-class CategoricalEmissions:
+
+class CategoricalEmissions(BaseEmission):
     """
     Categorical emission distribution for HMMs.
 
@@ -36,12 +39,10 @@ class CategoricalEmissions:
                  alpha:float = 1.0,
                  seed:Optional[int] = None,
                  device:Optional[torch.device] = None):
+        
+        super().__init__(n_dims,n_features,False,seed,device)
 
-        self.n_dims = n_dims
-        self.n_features = n_features
         self.alpha = alpha
-        self.seed = seed
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
         if init_params:
             self._emission_matrix = self.sample_emissions_params(seed=seed)
 
@@ -84,7 +85,7 @@ class CategoricalEmissions:
                                   alpha=self.alpha,
                                   device=self.device)
 
-    def map_emission(self, x: torch.Tensor) -> torch.Tensor:
+    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
         """Sample the emission probabilities for each hidden state."""
         return self.pdf.log_prob(x.repeat(self.n_dims,1).T)
 
