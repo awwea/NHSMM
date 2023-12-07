@@ -1,0 +1,10 @@
+.vscode
+.mypy_cache/
+chadhmm.egg-info
+dist
+setup.py
+setup.cfg
+src/__pycache__/
+src/emissions/__pycache__/
+src/hmm/__pycache__/
+src/hsmm/__pycache__/
