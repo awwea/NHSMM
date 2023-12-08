@@ -1,9 +1,12 @@
-from setuptools import setup #type: ignore
+from setuptools import setup, find_packages #type: ignore
+
+with open('README.md', encoding="utf-8") as handle:
+    LONG_DESCRIPTION = handle.read()
 
 setup(
     name='chadhmm',
-    packages = ['src'],
-    version='0.3.1',
+    packages=find_packages(),
+    version='0.3.3',
     description='Package for Hidden (Semi) Markov Models',
     author='GarroshIcecream',
     author_email='ad.pesek13@gmail.com',

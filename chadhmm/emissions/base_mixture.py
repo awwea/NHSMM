@@ -13,8 +13,8 @@ class MixtureEmissions(ABC):
 
     def __init__(self, 
                  n_dims: int,
-                 n_components: int,
                  n_features: int,
+                 n_components: int,
                  alpha: float = 1.0,
                  init_weights: bool = True,
                  seed: Optional[int] = None,
@@ -66,15 +66,19 @@ class MixtureEmissions(ABC):
         pass
 
     @abstractmethod
-    def _update_params(self, 
-                       X:List[torch.Tensor], 
-                       resp:List[torch.Tensor], 
-                       theta:Optional[ContextualVariables]=None) -> None:
+    def sample_emissions_params(self, X:Optional[torch.Tensor]=None, seed:Optional[int]=None):
+        """Sample the parameters of the Mixture."""
+        pass
+
+    @abstractmethod
+    def update_emission_params(self, 
+                               X:List[torch.Tensor], 
+                               resp:List[torch.Tensor], 
+                               theta:Optional[ContextualVariables]=None) -> None:
         """Update the parameters of the Mixture."""
         pass 
     
-    def sample_weights(self, 
-                       seed:Optional[int]) -> WeightsMatrix:
+    def sample_weights(self, seed:Optional[int]) -> WeightsMatrix:
         """Sample the weights for the mixture."""
         return WeightsMatrix(n_states=self.n_dims,
                              n_components=self.n_components,
@@ -82,8 +86,7 @@ class MixtureEmissions(ABC):
                              alpha=self.alpha,
                              device=self.device)    
 
-    def map_emission(self, 
-                     x:torch.Tensor) -> torch.Tensor:
+    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
         x_batched = x.unsqueeze(1).expand(-1,self.n_dims,-1)
         return self.mixture_pdf.log_prob(x_batched)
     

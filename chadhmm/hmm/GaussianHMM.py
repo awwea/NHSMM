@@ -81,15 +81,15 @@ class GaussianHMM(BaseHMM, GaussianEmissions):
     def dof(self):
         return self.n_states**2 - 1 + self.means.numel() + self.covs.numel() 
 
-    def _update_B_params(self, X, log_gamma, theta):
+    def _update_B_params(self,X,log_gamma,theta):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
-        GaussianEmissions._update_emissions_params(self,X,gamma,theta)
+        GaussianEmissions.update_emission_params(self,X,gamma,theta)
 
-    def check_sequence(self, sequence):
-        return validate_sequence(sequence, False, self.n_features)
+    def check_sequence(self,sequence):
+        return validate_sequence(sequence,False,self.n_features)
     
-    def map_emission(self, emission):
-        return GaussianEmissions.map_emission(self,emission)
+    def map_emission(self,x):
+        return GaussianEmissions.map_emission(self,x)
 
     def sample_B_params(self,X,seed=None):
         self.means, self.covs = GaussianEmissions.sample_emissions_params(self,X,seed)
@@ -181,13 +181,13 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
         for resp,gamma_val in zip(resp_vec,log_gamma):
             posterior_vec.append(torch.exp(resp + gamma_val.T.unsqueeze(1)))
 
-        GaussianMixtureEmissions._update_params(self,X,posterior_vec,theta)
+        GaussianMixtureEmissions.update_emission_params(self,X,posterior_vec,theta)
 
     def check_sequence(self,sequence):
         return validate_sequence(sequence, False, self.n_features)
     
-    def map_emission(self, emission):
-        return GaussianMixtureEmissions.map_emission(self,emission)
+    def map_emission(self,x):
+        return GaussianMixtureEmissions.map_emission(self,x)
 
     def sample_B_params(self,X,seed=None):
         self._means, self._covs = GaussianMixtureEmissions.sample_emissions_params(self,X,seed)

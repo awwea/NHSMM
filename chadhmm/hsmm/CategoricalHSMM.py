@@ -74,13 +74,13 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
     def check_sequence(self,sequence):
         return validate_sequence(sequence,True,self.n_features)
         
-    def map_emission(self,emission):
-        return CategoricalEmissions.map_emission(self,emission)
+    def map_emission(self,x):
+        return CategoricalEmissions.map_emission(self,x)
 
     def sample_B_params(self,X,seed=None):
-        self._emission_matrix = CategoricalEmissions.sample_emissions_params(self,self.alpha,X,seed)
+        self._emission_matrix = CategoricalEmissions.sample_emissions_params(self,X,seed)
 
-    def update_B_params(self, X, log_gamma, theta):
+    def update_B_params(self,X,log_gamma,theta):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
-        CategoricalEmissions.update_emissions_params(self,X,gamma,theta)
+        CategoricalEmissions.update_emission_params(self,X,gamma,theta)
 

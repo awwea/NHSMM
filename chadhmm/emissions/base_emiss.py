@@ -29,15 +29,15 @@ class BaseEmission(ABC):
 
     @abstractmethod
     def map_emission(self, x:torch.Tensor) -> torch.Tensor:
+        """Convert emissions into log probabilities."""
         pass
 
     @abstractmethod
     def sample_emissions_params(self, X:Optional[torch.Tensor]=None, seed:Optional[int]=None):
+        """Sample emission parameters."""
         pass
 
     @abstractmethod
-    def update_emissions_params(self,
-                                X:List[torch.Tensor], 
-                                gamma:List[torch.Tensor], 
-                                theta:Optional[ContextualVariables]=None):
+    def update_emission_params(self, X:List[torch.Tensor], gamma:List[torch.Tensor], theta:Optional[ContextualVariables]=None):
+        """Update emission parameters in the model."""
         pass

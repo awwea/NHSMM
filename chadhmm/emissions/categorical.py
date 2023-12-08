@@ -40,7 +40,7 @@ class CategoricalEmissions(BaseEmission):
                  seed:Optional[int] = None,
                  device:Optional[torch.device] = None):
         
-        super().__init__(n_dims,n_features,False,seed,device)
+        super().__init__(n_dims,n_features,True,seed,device)
 
         self.alpha = alpha
         if init_params:
@@ -71,10 +71,7 @@ class CategoricalEmissions(BaseEmission):
         else:
             raise NotImplementedError('Matrix type not supported')
 
-    def sample_emissions_params(self,
-                                X:Optional[torch.Tensor]=None,
-                                seed:Optional[int]=None) -> EmissionMatrix:
-        """Sample the emission parameters from a Dirichlet distribution."""
+    def sample_emissions_params(self,X=None,seed=None):
         if X is not None:
             emission_freqs = torch.bincount(X) / X.shape[0]
             return EmissionMatrix.from_tensor(emission_freqs.expand(self.n_dims,-1).log())
@@ -85,11 +82,13 @@ class CategoricalEmissions(BaseEmission):
                                   alpha=self.alpha,
                                   device=self.device)
 
-    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
-        """Sample the emission probabilities for each hidden state."""
+    def map_emission(self,x):
         return self.pdf.log_prob(x.repeat(self.n_dims,1).T)
 
-    def compute_emprobs(self, 
+    def update_emission_params(self,X,gamma,theta=None):
+        self._emission_matrix.matrix.copy_(self._compute_emprobs(X,gamma,theta))
+
+    def _compute_emprobs(self, 
                         X:List[torch.Tensor],
                         gamma:List[torch.Tensor],
                         theta:Optional[ContextualVariables]) -> torch.Tensor:  
@@ -109,10 +108,3 @@ class CategoricalEmissions(BaseEmission):
                     emission_mat[:,i] += masked_gamma.sum(dim=0)
 
         return log_normalize(emission_mat.log(),1)
-
-    def update_emissions_params(self, 
-                                X:List[torch.Tensor], 
-                                gamma:List[torch.Tensor], 
-                                theta:Optional[ContextualVariables]=None):
-        """Update Categorical emission parameters."""
-        self._emission_matrix.matrix.copy_(self.compute_emprobs(X,gamma,theta))

@@ -1,4 +1,5 @@
 import torch
+from torch.distributions import MultivariateNormal # type: ignore
 from typing import Optional, Literal, Tuple, List
 from sklearn.cluster import KMeans # type: ignore
 
@@ -43,8 +44,8 @@ class GaussianMixtureEmissions(MixtureEmissions):
 
     def __init__(self, 
                  n_dims: int,
-                 n_components: int,
                  n_features: int,
+                 n_components: int,
                  params_init: bool = True,
                  k_means: bool = False,
                  alpha: float = 1.0,
@@ -53,12 +54,11 @@ class GaussianMixtureEmissions(MixtureEmissions):
                  seed: Optional[int] = None,
                  device: Optional[torch.device] = None):
         
-        MixtureEmissions.__init__(self,n_dims,n_components,n_features,alpha,params_init,seed,device)
+        MixtureEmissions.__init__(self,n_dims,n_features,n_components,alpha,params_init,seed,device)
         
         self.k_means = k_means
         self.min_covar = min_covar
         self.covariance_type = covariance_type
-        
         if params_init:
             self._weights, self._means, self._covs = self.sample_emissions_params(seed=seed)
             
@@ -82,8 +82,8 @@ class GaussianMixtureEmissions(MixtureEmissions):
         self._covs = fill_covars(valid_covars, self.covariance_type, self.n_dims, self.n_features, self.n_components).to(self.device)
 
     @property
-    def pdf(self):
-        return torch.distributions.MultivariateNormal(self.means,self.covs)
+    def pdf(self) -> MultivariateNormal:
+        return MultivariateNormal(self.means,self.covs)
     
     @property
     def params(self):
@@ -91,9 +91,7 @@ class GaussianMixtureEmissions(MixtureEmissions):
                 'means': self.means, 
                 'covs': self.covs}
     
-    def sample_emissions_params(self, 
-                                X:Optional[torch.Tensor]=None,
-                                seed:Optional[int]=None) -> Tuple[WeightsMatrix,torch.Tensor,torch.Tensor]:
+    def sample_emissions_params(self,X=None,seed=None) -> Tuple[WeightsMatrix,torch.Tensor,torch.Tensor]:
         """Initialize the emission parameters."""
         new_weights = self.sample_weights(seed)
         if X is not None:
@@ -111,7 +109,7 @@ class GaussianMixtureEmissions(MixtureEmissions):
 
         return new_weights, means, covs
 
-    def _update_params(self,X,resp,theta=None):
+    def update_emission_params(self,X,resp,theta=None):
         self._weights.matrix.copy_(self._compute_weights(resp))
         self._means.copy_(self._compute_means(X,resp,theta)) 
         self._covs.copy_(self._compute_covs(X,resp,theta))

@@ -88,18 +88,18 @@ class GaussianHSMM(BaseHSMM, GaussianEmissions):
     def dof(self):
         return self.n_states**2 - 1 + self.means.numel() + self.covs.numel() 
     
-    def check_sequence(self, sequence, lengths=None):
-        return validate_sequence(sequence,False,self.n_features,lengths)
+    def check_sequence(self,sequence):
+        return validate_sequence(sequence,False,self.n_features)
     
-    def map_emission(self, emission):
-        return GaussianEmissions.map_emission(self,emission)
+    def map_emission(self,x):
+        return GaussianEmissions.map_emission(self,x)
 
     def sample_B_params(self,X=None,seed=None):
-        self._means,self._covs = GaussianEmissions.sample_emissions_params(self,self.min_covar,X,seed)
+        self._means,self._covs = GaussianEmissions.sample_emissions_params(self,X,seed)
 
-    def update_B_params(self, X, log_gamma, theta=None):
+    def update_B_params(self,X,log_gamma,theta=None):
         gamma = [gamma.exp() for gamma in log_gamma]
-        GaussianEmissions._update_emissions_params(self,X,gamma,theta)
+        GaussianEmissions.update_emission_params(self,X,gamma,theta)
 
 
 class GaussianMixtureHSMM(BaseHSMM, GaussianMixtureEmissions):
@@ -188,19 +188,19 @@ class GaussianMixtureHSMM(BaseHSMM, GaussianMixtureEmissions):
     def dof(self):
         return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self.means.numel() + self.covs.numel() 
     
-    def check_sequence(self, sequence):
+    def check_sequence(self,sequence):
         return validate_sequence(sequence,False,self.n_features)
     
-    def map_emission(self, emission):
-        return GaussianMixtureEmissions.map_emission(self,emission)
+    def map_emission(self,x):
+        return GaussianMixtureEmissions.map_emission(self,x)
 
     def sample_B_params(self,X,seed=None):
-        self._means, self._covs = GaussianMixtureEmissions.sample_emissions_params(self,self.min_covar,X,seed)
+        self._means, self._covs = GaussianMixtureEmissions.sample_emissions_params(self,X,seed)
 
-    def update_B_params(self, X, log_gamma, theta=None):
+    def update_B_params(self,X,log_gamma,theta=None):
         posterior_vec = []
         resp_vec = GaussianMixtureEmissions._compute_responsibilities(self,X)
         for resp,gamma_val in zip(resp_vec,log_gamma):
             posterior_vec.append(torch.exp(resp + gamma_val.T.unsqueeze(1)))
 
-        GaussianMixtureEmissions._update_params(self,X,posterior_vec,theta)
+        GaussianMixtureEmissions.update_emission_params(self,X,posterior_vec,theta)
