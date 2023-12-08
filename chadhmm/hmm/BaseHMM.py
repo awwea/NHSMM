@@ -110,6 +110,141 @@ class BaseHMM(ABC):
     def sample_B_params(self, X:Optional[torch.Tensor]=None, seed:Optional[int]=None):
         """Sample the emission parameters."""
         pass
+        
+    def sample_chain_params(self, alpha:float, seed:Optional[int]=None) -> Tuple[ProbabilityVector, TransitionMatrix]:
+        """Initialize the model parameters."""
+        return (ProbabilityVector(self.n_states, rand_seed=seed, alpha=alpha, device=self.device), 
+                TransitionMatrix(self.n_states, rand_seed=seed, alpha=alpha, device=self.device))
+
+    def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
+        """Convert a sequence of observations to an Observations object."""
+        X_valid = self.check_sequence(X)
+        n_samples = X_valid.shape[0]
+        seq_lenghts = [n_samples] if lengths is None else lengths
+        X_vec = list(torch.split(X_valid, seq_lenghts))
+
+        log_probs = []
+        for seq in X_vec:
+            log_probs.append(self.map_emission(seq))
+        
+        return Observations(n_samples,X_vec,log_probs,seq_lenghts,len(seq_lenghts))  
+    
+    def check_theta(self, theta:torch.Tensor, X:Observations) -> ContextualVariables:
+        """Returns the parameters of the model."""
+        if (n_dim:=theta.ndim) != 2:
+            raise ValueError(f'Context must be 2-dimensional. Got {n_dim}.')
+        elif theta.shape[1] not in (1, X.n_samples):
+            raise ValueError(f'Context must have shape (context_vars, 1) for time independent context or (context_vars,{X.n_samples}) for time dependent. Got {theta.shape}.')
+        else:
+            n_context, n_observations = theta.shape
+            time_dependent = n_observations == X.n_samples
+            adj_theta = torch.vstack((theta, torch.ones(size=(1,n_observations),
+                                                        dtype=torch.float64,
+                                                        device=self.device)))
+            if not time_dependent:
+                adj_theta = adj_theta.expand(n_context+1, X.n_samples)
+
+            context_matrix = list(torch.split(adj_theta,X.lengths,1))
+            return ContextualVariables(n_context, context_matrix, time_dependent) 
+
+    def fit(self,
+            X:torch.Tensor,
+            tol:float=1e-2,
+            max_iter:int=20,
+            n_init:int=1,
+            post_conv_iter:int=3,
+            ignore_conv:bool=False,
+            sample_B_from_X:bool=False,
+            verbose:bool=True,
+            plot_conv:bool=False,
+            lengths:Optional[List[int]]=None,
+            theta:Optional[torch.Tensor]=None) -> Dict[int, FittedModel]:
+        """Fit the model to the given sequence using the EM algorithm."""
+        if sample_B_from_X:
+            self.sample_B_params(X)
+        X_valid = self.to_observations(X,lengths)
+        valid_theta = self.check_theta(theta,X_valid) if theta is not None else None
+
+        self.conv = ConvergenceHandler(tol=tol,
+                                       max_iter=max_iter,
+                                       n_init=n_init,
+                                       post_conv_iter=post_conv_iter,
+                                       device=self.device,
+                                       verbose=verbose)
+
+        self._check_params
+        distinct_models = {}
+        for rank in range(n_init):
+            if rank > 0:
+                self._initial_vector, self._transition_matrix = self.sample_chain_params(self.alpha)
+            
+            self.conv.push_pull(sum(self._compute_log_likelihood(X_valid)),0,rank)
+            for iter in range(1,self.conv.max_iter+1):
+                # EM algorithm step
+                self._update_model(X_valid, valid_theta)
+
+                # remap emission probabilities after update of B
+                X_valid.log_probs = [self.map_emission(x) for x in X_valid.X]
+                
+                curr_log_like = sum(self._compute_log_likelihood(X_valid))
+                converged = self.conv.push_pull(curr_log_like,iter,rank)
+                if converged and not ignore_conv:
+                    print(f'Model converged after {iter} iterations with log-likelihood: {curr_log_like:.2f}')
+                    break
+
+            distinct_models[rank] = FittedModel(self.__str__(),
+                                                self.n_fit_params, 
+                                                self.dof,
+                                                converged,
+                                                curr_log_like, 
+                                                self.ic(X,lengths),
+                                                self.params)
+        
+        if plot_conv:
+            self.conv.plot_convergence()
+
+        return distinct_models
+
+    def predict(self, 
+                X:torch.Tensor, 
+                lengths:Optional[List[int]] = None,
+                algorithm:Literal['map','viterbi'] = 'viterbi') -> Tuple[float, Sequence[torch.Tensor]]:
+        """Predict the most likely sequence of hidden states."""
+        self._check_params
+        if algorithm not in DECODERS:
+            raise ValueError(f'Unknown decoder algorithm {algorithm}')
+        
+        decoder = {'viterbi': self._viterbi,
+                   'map': self._map}[algorithm]
+        
+        X_valid = self.to_observations(X, lengths)
+        log_score = sum(self._compute_log_likelihood(X_valid))
+        decoded_path = decoder(X_valid)
+
+        return log_score, decoded_path
+
+    def score(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> float:
+        """Compute the joint log-likelihood"""
+        return sum(self._score_observations(X,lengths))
+    
+    def score_samples(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> List[float]:
+        """Compute the log-likelihood for each sequence"""
+        return self._score_observations(X,lengths)
+
+    def ic(self, 
+           X:torch.Tensor, 
+           lengths:Optional[List[int]] = None, 
+           criterion:Literal['AIC','BIC','HQC'] = 'AIC') -> float:
+        """Calculates the information criteria for a given model."""
+        log_likelihood = self.score(X, lengths)
+        if criterion not in INFORM_CRITERIA:
+            raise NotImplementedError(f'{criterion} is not a valid information criterion. Valid criteria are: {INFORM_CRITERIA}')
+        
+        criterion_compute = {'AIC': lambda log_likelihood, dof: -2.0 * log_likelihood + 2.0 * dof,
+                             'BIC': lambda log_likelihood, dof: -2.0 * log_likelihood + dof * np.log(X.shape[0]),
+                             'HQC': lambda log_likelihood, dof: -2.0 * log_likelihood + 2.0 * dof * np.log(np.log(X.shape[0]))}[criterion]
+        
+        return criterion_compute(log_likelihood, self.dof)
     
     def _forward(self, X:Observations) -> List[torch.Tensor]:
         """Forward pass of the forward-backward algorithm."""
@@ -243,9 +378,15 @@ class BaseHMM(ABC):
     def _map(self, X:Observations) -> List[torch.Tensor]:
         """Compute the most likely (MAP) sequence of indiviual hidden states."""
         map_paths = []
-        for gamma,_ in self._compute_posteriors(X):
+        gamma_vec,_ = self._compute_posteriors(X)
+        for gamma in gamma_vec:
             map_paths.append(torch.argmax(gamma, dim=1))
         return map_paths
+
+    def _score_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> List[float]:
+        """Compute the log-likelihood for each sample sequence."""
+        self._check_params
+        return self._compute_log_likelihood(self.to_observations(X, lengths))
 
     def _compute_log_likelihood(self, X:Observations) -> List[float]:
         """Compute the log-likelihood of the given sequence."""
@@ -254,148 +395,3 @@ class BaseHMM(ABC):
             scores.append(alpha[-1].logsumexp(dim=0).item())
 
         return scores
-    
-    def sample_chain_params(self, alpha:float, seed:Optional[int]=None) -> Tuple[ProbabilityVector, TransitionMatrix]:
-        """Initialize the model parameters."""
-        return (ProbabilityVector(self.n_states, rand_seed=seed, alpha=alpha, device=self.device), 
-                TransitionMatrix(self.n_states, rand_seed=seed, alpha=alpha, device=self.device))
-
-    def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
-        """Convert a sequence of observations to an Observations object."""
-        X_valid = self.check_sequence(X)
-        n_samples = X_valid.shape[0]
-        seq_lenghts = [n_samples] if lengths is None else lengths
-        X_vec = list(torch.split(X_valid, seq_lenghts))
-
-        log_probs = []
-        for seq in X_vec:
-            log_probs.append(self.map_emission(seq))
-        
-        return Observations(n_samples,X_vec,log_probs,seq_lenghts,len(seq_lenghts))  
-    
-    def check_theta(self, theta:torch.Tensor, X:Observations) -> ContextualVariables:
-        """Returns the parameters of the model."""
-        if (n_dim:=theta.ndim) != 2:
-            raise ValueError(f'Context must be 2-dimensional. Got {n_dim}.')
-        elif theta.shape[1] not in (1, X.n_samples):
-            raise ValueError(f'Context must have shape (context_vars, 1) for time independent context or (context_vars,{X.n_samples}) for time dependent. Got {theta.shape}.')
-        else:
-            n_context, n_observations = theta.shape
-            time_dependent = n_observations == X.n_samples
-            adj_theta = torch.vstack((theta, torch.ones(size=(1,n_observations),
-                                                        dtype=torch.float64,
-                                                        device=self.device)))
-            if not time_dependent:
-                adj_theta = adj_theta.expand(n_context+1, X.n_samples)
-
-            context_matrix = list(torch.split(adj_theta,X.lengths,1))
-            return ContextualVariables(n_context, context_matrix, time_dependent) 
-
-    def fit(self,
-            X:torch.Tensor,
-            tol:float=1e-2,
-            max_iter:int=20,
-            n_init:int=1,
-            post_conv_iter:int=3,
-            ignore_conv:bool=False,
-            sample_B_from_X:bool=False,
-            verbose:bool=True,
-            plot_conv:bool=False,
-            lengths:Optional[List[int]]=None,
-            theta:Optional[torch.Tensor]=None) -> Dict[int, FittedModel]:
-        """Fit the model to the given sequence using the EM algorithm."""
-        if sample_B_from_X:
-            self.sample_B_params(X)
-        X_valid = self.to_observations(X,lengths)
-        valid_theta = self.check_theta(theta,X_valid) if theta is not None else None
-
-        self.conv = ConvergenceHandler(tol=tol,
-                                       max_iter=max_iter,
-                                       n_init=n_init,
-                                       post_conv_iter=post_conv_iter,
-                                       device=self.device,
-                                       verbose=verbose)
-
-        self._check_params
-        distinct_models = {}
-        for rank in range(n_init):
-            if rank > 0:
-                self._initial_vector, self._transition_matrix = self.sample_chain_params(self.alpha)
-            
-            self.conv.push_pull(sum(self._compute_log_likelihood(X_valid)),0,rank)
-            for iter in range(1,self.conv.max_iter+1):
-                # EM algorithm step
-                self._update_model(X_valid, valid_theta)
-
-                # remap emission probabilities after update of B
-                X_valid.log_probs = [self.map_emission(x) for x in X_valid.X]
-                
-                curr_log_like = sum(self._compute_log_likelihood(X_valid))
-                converged = self.conv.push_pull(curr_log_like,iter,rank)
-                if converged and not ignore_conv:
-                    print(f'Model converged after {iter} iterations with log-likelihood: {curr_log_like:.2f}')
-                    break
-
-            distinct_models[rank] = FittedModel(self.__str__(),
-                                                self.n_fit_params, 
-                                                self.dof,
-                                                converged,
-                                                curr_log_like, 
-                                                self.ic(X,lengths),
-                                                self.params)
-        
-        if plot_conv:
-            self.conv.plot_convergence()
-
-        return distinct_models
-
-    def predict(self, 
-                X:torch.Tensor, 
-                lengths:Optional[List[int]] = None,
-                algorithm:Literal['map','viterbi'] = 'viterbi') -> Tuple[float, Sequence[torch.Tensor]]:
-        """Predict the most likely sequence of hidden states."""
-        self._check_params
-        if algorithm not in DECODERS:
-            raise ValueError(f'Unknown decoder algorithm {algorithm}')
-        
-        decoder = {'viterbi': self._viterbi,
-                   'map': self._map}[algorithm]
-        
-        X_valid = self.to_observations(X, lengths)
-        log_score = sum(self._compute_log_likelihood(X_valid))
-        decoded_path = decoder(X_valid)
-
-        return log_score, decoded_path
-
-    def _score_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> List[float]:
-        """Compute the log-likelihood for each sample sequence."""
-        self._check_params
-        return self._compute_log_likelihood(self.to_observations(X, lengths))
-
-    def score(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> float:
-        """Compute the joint log-likelihood"""
-        return sum(self._score_observations(X,lengths))
-    
-    def score_samples(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> List[float]:
-        """Compute the log-likelihood for each sequence"""
-        return self._score_observations(X,lengths)
-
-    def ic(self, 
-           X:torch.Tensor, 
-           lengths:Optional[List[int]] = None, 
-           criterion:Literal['AIC','BIC','HQC'] = 'AIC') -> float:
-        """Calculates the information criteria for a given model."""
-        log_likelihood = self.score(X, lengths)
-        if criterion not in INFORM_CRITERIA:
-            raise NotImplementedError(f'{criterion} is not a valid information criterion. Valid criteria are: {INFORM_CRITERIA}')
-        
-        criterion_compute = {'AIC': lambda log_likelihood, dof: -2.0 * log_likelihood + 2.0 * dof,
-                             'BIC': lambda log_likelihood, dof: -2.0 * log_likelihood + dof * np.log(X.shape[0]),
-                             'HQC': lambda log_likelihood, dof: -2.0 * log_likelihood + 2.0 * dof * np.log(np.log(X.shape[0]))}[criterion]
-        
-        return criterion_compute(log_likelihood, self.dof)
-
-
-
-
-

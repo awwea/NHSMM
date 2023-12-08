@@ -151,7 +151,7 @@ class GaussianMixtureHSMM(BaseHSMM, GaussianMixtureEmissions):
 
         BaseHSMM.__init__(self,n_states,max_duration,params_init,alpha,random_state,device)
         
-        GaussianMixtureEmissions.__init__(self,n_states,n_components,n_features,params_init,k_means,alpha,covariance_type,min_covar,random_state,device)
+        GaussianMixtureEmissions.__init__(self,n_states,n_features,n_components,params_init,k_means,alpha,covariance_type,min_covar,random_state,device)
                     
     def __str__(self):
         return f'GaussianMixtureHSMM(n_states={self.n_states}, n_durations={self.max_duration},n_features={self.n_features}, n_components={self.n_components})'

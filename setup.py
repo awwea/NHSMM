@@ -6,7 +6,7 @@ with open('README.md', encoding="utf-8") as handle:
 setup(
     name='chadhmm',
     packages=find_packages(),
-    version='0.3.3',
+    version='0.3.6',
     description='Package for Hidden (Semi) Markov Models',
     author='GarroshIcecream',
     author_email='ad.pesek13@gmail.com',

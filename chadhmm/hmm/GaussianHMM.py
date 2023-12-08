@@ -140,7 +140,7 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
 
         BaseHMM.__init__(self,n_states,params_init,alpha,seed,device)
         
-        GaussianMixtureEmissions.__init__(self,n_states,n_components,n_features,params_init,k_means,alpha,covariance_type, min_covar,seed,device)
+        GaussianMixtureEmissions.__init__(self,n_states,n_features,n_components,params_init,k_means,alpha,covariance_type, min_covar,seed,device)
                     
     def __str__(self):
         return f'GaussianMixtureHMM(n_states={self.n_states}, n_features={self.n_features}, n_components={self.n_components})'
@@ -184,7 +184,7 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
         GaussianMixtureEmissions.update_emission_params(self,X,posterior_vec,theta)
 
     def check_sequence(self,sequence):
-        return validate_sequence(sequence, False, self.n_features)
+        return validate_sequence(sequence,False,self.n_features)
     
     def map_emission(self,x):
         return GaussianMixtureEmissions.map_emission(self,x)

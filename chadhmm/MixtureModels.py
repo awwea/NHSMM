@@ -19,7 +19,7 @@ class GaussianMixtureModel(GaussianMixtureEmissions):
                  device: Optional[torch.device] = None):
         
         # TODO: for now K-means are not implemented
-        GaussianMixtureEmissions.__init__(self,n_dims,n_components,n_features,params_init,False,alpha,covariance_type,min_covar,seed,device)
+        GaussianMixtureEmissions.__init__(self,n_dims,n_features,n_components,params_init,False,alpha,covariance_type,min_covar,seed,device)
 
     def __str__(self):
         return f'GaussianMixtureModel(n_states={self.n_dims}, n_features={self.n_features}, n_components={self.n_components})'
@@ -83,9 +83,9 @@ class GaussianMixtureModel(GaussianMixtureEmissions):
             self.conv.push_pull(self.score(X),0,rank)
             for iter in range(1,self.conv.max_iter+1):
                 # EM algorithm step
-                self._update_params(X=X_vec,
-                                    resp=self._compute_responsibilities(X_vec),
-                                    theta=theta)
+                self.update_emission_params(X=X_vec,
+                                            resp=self._compute_responsibilities(X_vec),
+                                            theta=theta)
                 
                 curr_log_like = self.score(X)
                 converged = self.conv.push_pull(curr_log_like,iter,rank)
