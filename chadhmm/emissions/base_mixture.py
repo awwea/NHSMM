@@ -1,12 +1,14 @@
 import torch
-from abc import ABC, abstractmethod, abstractproperty
-from typing import Optional, List, Dict
-from torch.distributions import Distribution, MixtureSameFamily
-from ..stochastic_matrix import WeightsMatrix
-from ..utils import ContextualVariables, log_normalize
+from abc import ABC
+from typing import Optional, List
+from torch.distributions import MixtureSameFamily
+
+from ..emissions.base_emiss import BaseEmission
+from ..stochastic_matrix import StochasticTensor, MAT_OPS
+from ..utils import log_normalize
 
 
-class MixtureEmissions(ABC):
+class MixtureEmissions(BaseEmission, ABC):
     """
     Mixture model for HMM emissions. This class is an abstract base class for Gaussian, Poisson and other mixture models.
     """
@@ -16,78 +18,42 @@ class MixtureEmissions(ABC):
                  n_features: int,
                  n_components: int,
                  alpha: float = 1.0,
-                 init_weights: bool = True,
-                 seed: Optional[int] = None,
                  device: Optional[torch.device] = None):
         
         self.n_dims = n_dims
-        self.alpha = alpha
         self.n_components = n_components
         self.n_features = n_features
+        self.alpha = alpha
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
+        self._weights = self.sample_weights()
 
-        if init_weights:
-            self._weights = self.sample_weights(seed)
+    def __str__(self):
+        return BaseEmission.__str__(self).replace(')',f', n_components={self.n_components})')
 
     @property
-    def weights(self) -> WeightsMatrix:
-        try:
-            return self._weights
-        except AttributeError:
-            raise AttributeError('Weights are not initialized')
+    def weights(self) -> StochasticTensor:
+        return self._weights
 
     @weights.setter
-    def weights(self, vector):
-        assert (self.n_dims, self.n_components) == vector.shape, 'Matrix dimensions differ from HMM model'
-        if isinstance(vector, WeightsMatrix):
-            self._weights = vector
-        elif isinstance(vector, torch.Tensor):
-            self._weights = WeightsMatrix(n_states=self.n_dims, 
-                                          n_components=self.n_components,
-                                          matrix=vector,
-                                          device=self.device)
-        else:
-            raise NotImplementedError(f'Expected torch Tensor or WeightsMatrix object, got {type(vector)}')
+    def weights(self, matrix):
+        self.weights.logits = matrix
         
     @property
     def mixture_pdf(self) -> MixtureSameFamily:
         """Return the emission distribution for Gaussian Mixture Distribution."""
-        return MixtureSameFamily(mixture_distribution = self.weights._dist,
+        return MixtureSameFamily(mixture_distribution = self.weights.pmf,
                                  component_distribution = self.pdf)
-
-    @abstractproperty
-    def pdf(self) -> Distribution:
-        """Return the emission distribution of Mixture."""
-        pass
-
-    @abstractproperty
-    def params(self) -> Dict[str, torch.Tensor]:
-        """Return the parameters of the Mixture."""
-        pass
-
-    @abstractmethod
-    def sample_emissions_params(self, X:Optional[torch.Tensor]=None, seed:Optional[int]=None):
-        """Sample the parameters of the Mixture."""
-        pass
-
-    @abstractmethod
-    def update_emission_params(self, 
-                               X:List[torch.Tensor], 
-                               resp:List[torch.Tensor], 
-                               theta:Optional[ContextualVariables]=None) -> None:
-        """Update the parameters of the Mixture."""
-        pass 
     
-    def sample_weights(self, seed:Optional[int]) -> WeightsMatrix:
+    def sample_weights(self) -> StochasticTensor:
         """Sample the weights for the mixture."""
-        return WeightsMatrix(n_states=self.n_dims,
-                             n_components=self.n_components,
-                             rand_seed=seed,
-                             alpha=self.alpha,
-                             device=self.device)    
+        return StochasticTensor.from_dirichlet(name='Weights',
+                                               size=(self.n_dims, self.n_components),
+                                               prior=self.alpha,
+                                               device=self.device)    
 
     def map_emission(self, x:torch.Tensor) -> torch.Tensor:
-        x_batched = x.unsqueeze(1).expand(-1,self.n_dims,-1)
+        b_size = (-1,self.n_dims,-1) if x.ndim == 2 else (self.n_dims,-1)
+        x_batched = x.unsqueeze(-2).expand(b_size)
         return self.mixture_pdf.log_prob(x_batched)
     
     def _compute_responsibilities(self, X:List[torch.Tensor]) -> List[torch.Tensor]:
@@ -100,7 +66,7 @@ class MixtureEmissions(ABC):
                                                device=self.device)
 
             for t in range(n_observations):
-                log_responsibilities[:,:,t] = log_normalize(self.weights.matrix + self.pdf.log_prob(seq[t]),1)
+                log_responsibilities[:,:,t] = log_normalize(self.weights.logits + self.pdf.log_prob(seq[t]),1)
 
             resp_vec.append(log_responsibilities)
         

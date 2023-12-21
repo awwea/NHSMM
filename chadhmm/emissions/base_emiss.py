@@ -10,18 +10,15 @@ class BaseEmission(ABC):
                  n_dims: int,
                  n_features: int,
                  discrete: bool,
-                 seed:Optional[int] = None,
                  device:Optional[torch.device] = None):
 
         self.n_dims = n_dims
         self.n_features = n_features
         self.discrete = discrete
-        self.seed = seed
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
         
-    @abstractproperty
     def __str__(self):
-        pass
+        return f'{self.__class__.__name__}(n_dims={self.n_dims}, n_features={self.n_features})'
 
     @abstractproperty
     def pdf(self):
@@ -33,11 +30,11 @@ class BaseEmission(ABC):
         pass
 
     @abstractmethod
-    def sample_emissions_params(self, X:Optional[torch.Tensor]=None, seed:Optional[int]=None):
+    def sample_emission_params(self, X:Optional[torch.Tensor]=None):
         """Sample emission parameters."""
         pass
 
     @abstractmethod
-    def update_emission_params(self, X:List[torch.Tensor], gamma:List[torch.Tensor], theta:Optional[ContextualVariables]=None):
+    def update_emission_params(self, X:List[torch.Tensor], posterior:List[torch.Tensor], theta:Optional[ContextualVariables]=None):
         """Update emission parameters in the model."""
         pass

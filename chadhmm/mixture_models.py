@@ -8,21 +8,16 @@ from .utils import FittedModel, ConvergenceHandler, INFORM_CRITERIA, validate_se
 class GaussianMixtureModel(GaussianMixtureEmissions):
 
     def __init__(self, 
-                 n_dims: int,
-                 n_components: int,
-                 n_features: int,
-                 params_init: bool = True,
-                 alpha: float = 1.0,
-                 covariance_type: GaussianMixtureEmissions.COVAR_TYPES_HINT = 'full',
-                 min_covar: float = 1e-3,
-                 seed: Optional[int] = None,
-                 device: Optional[torch.device] = None):
+                 n_dims:int,
+                 n_components:int,
+                 n_features:int,
+                 alpha:float = 1.0,
+                 covariance_type:GaussianMixtureEmissions.COVAR_TYPES_HINT = 'full',
+                 min_covar:float = 1e-3,
+                 seed:Optional[int] = None,
+                 device:Optional[torch.device] = None):
         
-        # TODO: for now K-means are not implemented
-        GaussianMixtureEmissions.__init__(self,n_dims,n_features,n_components,params_init,False,alpha,covariance_type,min_covar,seed,device)
-
-    def __str__(self):
-        return f'GaussianMixtureModel(n_states={self.n_dims}, n_features={self.n_features}, n_components={self.n_components})'
+        GaussianMixtureEmissions.__init__(self,n_dims,n_features,n_components,False,alpha,covariance_type,min_covar,seed,device)
     
     @property
     def dof(self) -> int:
@@ -39,6 +34,12 @@ class GaussianMixtureModel(GaussianMixtureEmissions):
                     'tied': self.n_features * (self.n_features + 1) // 2,
                 }[self.covariance_type]}
     
+    @property
+    def params(self):
+        return {'weights':self.weights.logits,
+                'means':self.means,
+                'covars':self.covs}
+
     def score(self,X:torch.Tensor) -> float:
         return self.map_emission(X).sum(0).item()
 
@@ -83,9 +84,7 @@ class GaussianMixtureModel(GaussianMixtureEmissions):
             self.conv.push_pull(self.score(X),0,rank)
             for iter in range(1,self.conv.max_iter+1):
                 # EM algorithm step
-                self.update_emission_params(X=X_vec,
-                                            resp=self._compute_responsibilities(X_vec),
-                                            theta=theta)
+                self.update_emission_params(X_vec,self._compute_responsibilities(X_vec),theta)
                 
                 curr_log_like = self.score(X)
                 converged = self.conv.push_pull(curr_log_like,iter,rank)

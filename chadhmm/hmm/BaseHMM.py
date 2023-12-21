@@ -4,11 +4,13 @@ from abc import ABC, abstractmethod, abstractproperty
 import torch
 import numpy as np
 
-from ..stochastic_matrix import TransitionMatrix, ProbabilityVector # type: ignore
-from ..utils import FittedModel,ContextualVariables, ConvergenceHandler, Observations, log_normalize, sequence_generator, DECODERS, INFORM_CRITERIA # type: ignore
+from ..stochastic_matrix import StochasticTensor, MAT_OPS # type: ignore
+from ..utils import (Multiprocessor, FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
+log_normalize, sequence_generator, 
+DECODERS, INFORM_CRITERIA) # type: ignore
 
 
-class BaseHMM(ABC): 
+class BaseHMM(ABC):
     """
     Base Abstract Class for HMM
     ----------
@@ -16,65 +18,42 @@ class BaseHMM(ABC):
     """
 
     def __init__(self,
-                 n_states: int,
-                 params_init: bool = False,
-                 alpha: float = 1.0,
-                 seed: Optional[int] = None,
-                 device: Optional[torch.device] = None):
+                 n_states:int,
+                 alpha:float = 1.0,
+                 seed:Optional[int] = None,
+                 device:Optional[torch.device] = None):
 
         self.n_states = n_states
         self.alpha = alpha
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
-        if params_init:
-            self._initial_vector, self._transition_matrix = self.sample_chain_params(self.alpha,seed)
+
+        self._seed_gen = SeedGenerator(seed)
+        self._initial_vector, self._transition_matrix = self.sample_chain_params(self.alpha)
 
     @property
-    def transition_matrix(self) -> TransitionMatrix:
+    def transition_matrix(self) -> StochasticTensor:
         return self._transition_matrix
 
     @transition_matrix.setter
-    def transition_matrix(self, matrix:torch.Tensor):
-        assert (self.n_states,self.n_states) == matrix.shape, 'Matrix dimensions differ from HMM model'
-        if isinstance(matrix, TransitionMatrix):
-            self._transition_matrix = matrix
-        elif isinstance(matrix, torch.Tensor):
-            self._transition_matrix = TransitionMatrix(n_states=self.n_states,
-                                                       matrix=matrix,
-                                                       device=self.device)
-        else:
-            raise NotImplementedError('Matrix type not supported')
+    def transition_matrix(self, matrix):
+        self.transition_matrix.logits = matrix
 
     @property
-    def initial_vector(self) -> ProbabilityVector:
+    def initial_vector(self) -> StochasticTensor:
         return self._initial_vector
 
     @initial_vector.setter
-    def initial_vector(self, vector:torch.Tensor):
-        assert (self.n_states,) == vector.shape, 'Matrix dimensions differ from HMM model'
-        if isinstance(vector, ProbabilityVector):
-            self._initial_vector = vector
-        elif isinstance(vector, torch.Tensor):
-            self._initial_vector = ProbabilityVector(n_states=self.n_states, 
-                                                     vector=vector,
-                                                     device=self.device)
-        else:
-            raise NotImplementedError('Matrix type not supported')
+    def initial_vector(self, matrix):
+        self.initial_vector.logits = matrix
         
-    @property    
-    def view_params(self):
-        """Print the model parameters."""
-        for param in self.params.values():
-            param.view()
-            print('\n')
+    @property
+    def seed(self):
+        self._seed_gen.seed
         
     @property
     def _check_params(self):
         """Check if the model parameters are set."""
         return self.params
-    
-    @abstractproperty
-    def __str__(self):
-        pass
 
     @abstractproperty
     def params(self) -> Dict[str, torch.Tensor]:
@@ -97,7 +76,7 @@ class BaseHMM(ABC):
         pass
 
     @abstractmethod
-    def check_sequence(self, sequence:torch.Tensor) -> torch.Tensor:
+    def check_sequence(self, X:torch.Tensor) -> torch.Tensor:
         """Get emission probabilities for a given sequence of observations."""
         pass
 
@@ -107,14 +86,19 @@ class BaseHMM(ABC):
         pass
 
     @abstractmethod
-    def sample_B_params(self, X:Optional[torch.Tensor]=None, seed:Optional[int]=None):
+    def sample_B_params(self, X:Optional[torch.Tensor]=None):
         """Sample the emission parameters."""
         pass
+
+    # def sample(self, size:torch.Size) -> torch.Tensor:
+    #     start = self.initial_vector.pmf.sample()
+    #     self.transition_matrix.pmf.sample(size)
+    #     return torch.cat((start))
         
-    def sample_chain_params(self, alpha:float, seed:Optional[int]=None) -> Tuple[ProbabilityVector, TransitionMatrix]:
+    def sample_chain_params(self, alpha:float = 1.0) -> Tuple[StochasticTensor, StochasticTensor]:
         """Initialize the model parameters."""
-        return (ProbabilityVector(self.n_states, rand_seed=seed, alpha=alpha, device=self.device), 
-                TransitionMatrix(self.n_states, rand_seed=seed, alpha=alpha, device=self.device))
+        return (StochasticTensor.from_dirichlet('Initial',(self.n_states,),self.device,False,alpha), 
+                StochasticTensor.from_dirichlet('Transition',(self.n_states,self.n_states),self.device,False,alpha))
 
     def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
         """Convert a sequence of observations to an Observations object."""
@@ -337,10 +321,14 @@ class BaseHMM(ABC):
     
     def _update_model(self, X:Observations, theta:Optional[ContextualVariables]) -> float:
         """Compute the updated parameters for the model."""
-        log_gamma, log_xi = self._compute_posteriors(X)
+        log_alpha = self._forward(X)
+        log_beta = self._backward(X)
 
-        self._initial_vector.matrix.copy_(self._accum_pi(log_gamma))
-        self._transition_matrix.matrix.copy_(self._accum_A(log_xi))
+        log_gamma = self._gamma(log_alpha,log_beta)
+        log_xi = self._xi(X,log_alpha,log_beta)
+
+        self._initial_vector._logits.copy_(self._accum_pi(log_gamma))
+        self._transition_matrix._logits.copy_(self._accum_A(log_xi))
         self._update_B_params(X.X,log_gamma,theta)
 
         return sum(self._compute_log_likelihood(X))

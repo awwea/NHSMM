@@ -25,18 +25,14 @@ class GaussianHSMM(BaseHSMM, GaussianEmissions):
         Number of features in the emission data.
     n_components (int):
         Number of components in the Gaussian mixture model.
-    params_init (bool):
-        Whether to initialize the model parameters prior to fitting.
     alpha (float):
         Dirichlet concentration parameter for the prior over initial state probabilities and transition probabilities.
     covariance_type (COVAR_TYPES):
         Type of covariance parameters to use for the emission distributions.
     min_covar (float):
         Floor value for covariance matrices.
-    random_state (Optional[int]):
+    seed (Optional[int]):
         Random seed to use for reproducible results.
-    verbose (bool):
-        Whether to print progress logs during fitting.
     """
 
     COVAR_TYPES = Literal['spherical', 'tied', 'diag', 'full']
@@ -45,20 +41,16 @@ class GaussianHSMM(BaseHSMM, GaussianEmissions):
                  n_states: int,
                  n_features: int,
                  max_duration: int,
-                 params_init: bool = False,
                  k_means: bool = False,
                  alpha: float = 1.0,
                  min_covar: float = 1e-3,
                  covariance_type: COVAR_TYPES = 'full',
-                 random_state: Optional[int] = None,
+                 seed: Optional[int] = None,
                  device: Optional[torch.device] = None):
 
-        BaseHSMM.__init__(self,n_states,max_duration,params_init,alpha,random_state,device)
+        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed,device)
         
-        GaussianEmissions.__init__(self,n_states,n_features,params_init,k_means,covariance_type,min_covar,random_state,device)
-                    
-    def __str__(self):
-        return f'GaussianHSMM(n_states={self.n_states}, n_durations={self.max_duration},n_features={self.n_features})'
+        GaussianEmissions.__init__(self,n_states,n_features,k_means,covariance_type,min_covar,device)
 
     @property
     def n_fit_params(self):
@@ -78,9 +70,9 @@ class GaussianHSMM(BaseHSMM, GaussianEmissions):
     
     @property
     def params(self):
-        return {'pi':self.initial_vector.matrix,
-                'A':self.transition_matrix.matrix,
-                'D':self.duration_matrix.matrix,
+        return {'pi':self.initial_vector.logits,
+                'A':self.transition_matrix.logits,
+                'D':self.duration_matrix.logits,
                 'means': self.means, 
                 'covars': self.covs}
 
@@ -95,7 +87,7 @@ class GaussianHSMM(BaseHSMM, GaussianEmissions):
         return GaussianEmissions.map_emission(self,x)
 
     def sample_B_params(self,X=None,seed=None):
-        self._means,self._covs = GaussianEmissions.sample_emissions_params(self,X,seed)
+        self._means,self._covs = GaussianEmissions.sample_emission_params(self,X,seed)
 
     def update_B_params(self,X,log_gamma,theta=None):
         gamma = [gamma.exp() for gamma in log_gamma]
@@ -114,47 +106,39 @@ class GaussianMixtureHSMM(BaseHSMM, GaussianMixtureEmissions):
     ----------
     n_states (int):
         Number of hidden states in the model.
-    max_duration (int):
-        Maximum duration of the states.
     n_features (int):
         Number of features in the emission data.
+    max_duration (int):
+        Maximum duration of the states.
     n_components (int):
         Number of components in the Gaussian mixture model.
-    params_init (bool):
-        Whether to initialize the model parameters prior to fitting.
     alpha (float):
         Dirichlet concentration parameter for the prior over initial state probabilities and transition probabilities.
     covariance_type (COVAR_TYPES):
         Type of covariance parameters to use for the emission distributions.
     min_covar (float):
         Floor value for covariance matrices.
-    random_state (Optional[int]):
+    seed (Optional[int]):
         Random seed to use for reproducible results.
-    verbose (bool):
-        Whether to print progress logs during fitting.
     """
 
     COVAR_TYPES = Literal['spherical', 'tied', 'diag', 'full']
 
     def __init__(self,
-                 n_states: int,
-                 n_features: int,
-                 max_duration: int,
-                 n_components: int = 1,
-                 params_init: bool = False,
-                 k_means: bool = False,
-                 alpha: float = 1.0,
-                 covariance_type: COVAR_TYPES = 'full',
-                 min_covar: float = 1e-3,
-                 random_state: Optional[int] = None,
-                 device: Optional[torch.device] = None):
+                 n_states:int,
+                 n_features:int,
+                 max_duration:int,
+                 n_components:int = 1,
+                 k_means:bool = False,
+                 alpha:float = 1.0,
+                 covariance_type:COVAR_TYPES = 'full',
+                 min_covar:float = 1e-3,
+                 seed:Optional[int] = None,
+                 device:Optional[torch.device] = None):
 
-        BaseHSMM.__init__(self,n_states,max_duration,params_init,alpha,random_state,device)
+        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed,device)
         
-        GaussianMixtureEmissions.__init__(self,n_states,n_features,n_components,params_init,k_means,alpha,covariance_type,min_covar,random_state,device)
-                    
-    def __str__(self):
-        return f'GaussianMixtureHSMM(n_states={self.n_states}, n_durations={self.max_duration},n_features={self.n_features}, n_components={self.n_components})'
+        GaussianMixtureEmissions.__init__(self,n_states,n_features,n_components,k_means,alpha,covariance_type,min_covar,seed,device)
 
     @property
     def n_fit_params(self):
@@ -177,10 +161,10 @@ class GaussianMixtureHSMM(BaseHSMM, GaussianMixtureEmissions):
     
     @property
     def params(self):
-        return {'pi':self.initial_vector.matrix,
-                'A':self.transition_matrix.matrix,
-                'D':self.duration_matrix.matrix,
-                'weights': self.weights.matrix,
+        return {'pi':self.initial_vector.logits,
+                'A':self.transition_matrix.logits,
+                'D':self.duration_matrix.logits,
+                'weights': self.weights.logits,
                 'means': self.means, 
                 'covars': self.covs}
 
@@ -195,7 +179,7 @@ class GaussianMixtureHSMM(BaseHSMM, GaussianMixtureEmissions):
         return GaussianMixtureEmissions.map_emission(self,x)
 
     def sample_B_params(self,X,seed=None):
-        self._means, self._covs = GaussianMixtureEmissions.sample_emissions_params(self,X,seed)
+        self._means, self._covs = GaussianMixtureEmissions.sample_emission_params(self,X,seed)
 
     def update_B_params(self,X,log_gamma,theta=None):
         posterior_vec = []

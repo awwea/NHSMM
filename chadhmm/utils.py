@@ -1,10 +1,12 @@
-from typing import Generator, Sequence, Tuple, Optional, List, Generator, Dict
+from typing import Generator, Sequence, Tuple, Optional, List, Generator, Dict, Callable, Union
 from dataclasses import dataclass, field
 
 import torch
+from torch.multiprocessing import Process, Queue
 import matplotlib.pyplot as plt # type: ignore
 from prettytable import PrettyTable # type: ignore
 
+MAT_TYPES = frozenset(('Transition','Emission','Duration','Weights','Matrix','Tensor','Initial','Vector'))
 DECODERS = frozenset(('viterbi', 'map'))
 INFORM_CRITERIA = frozenset(('AIC', 'BIC', 'HQC'))
 
@@ -35,6 +37,33 @@ class ContextualVariables:
     n_context: int
     matrix: List[torch.Tensor]
     time_dependent: bool = field(default=False)
+
+
+class Multiprocessor:
+
+    def __init__(self):
+        self.processes = []
+        self.queue = Queue()
+
+    @staticmethod
+    def _wrapper(func:Callable, queue:Queue, args, kwargs):
+        ret = func(*args, **kwargs)
+        queue.put(ret)
+
+    def run(self, func:Callable, name:str, *args, **kwargs):
+        args2 = [func, self.queue, args, kwargs]
+        p = Process(target=self._wrapper, name=name, args=args2)
+        self.processes.append(p)
+        p.start()
+
+    def wait(self):
+        rets = []
+        for p in self.processes:
+            ret = self.queue.get()
+            rets.append(ret)
+        for p in self.processes:
+            p.join()
+        return rets
 
 class SeedGenerator:
     def __init__(self, seed: Optional[int] = None):
@@ -164,9 +193,6 @@ class ConvergenceHandler:
         ax.legend(loc='lower right')
         plt.show()
 
-def states_names(n: int, state_type: str) -> Sequence[str]:
-    type_alias = state_type[0].upper()
-    return [f'{type_alias}_{n}' for n in range(n)]
 
 def laplace_smoothing(log_matrix: torch.Tensor, k: float) -> torch.Tensor:
     """Laplace smoothing of a log probability matrix"""
@@ -178,21 +204,31 @@ def laplace_smoothing(log_matrix: torch.Tensor, k: float) -> torch.Tensor:
         smoothed_log_matrix = torch.log((real_matrix + k) / (1 + k * real_matrix.shape[-1]))
         return smoothed_log_matrix
 
-def validate_prob_matrix(matrix:torch.Tensor, log:bool=True) -> torch.Tensor:    
-    if matrix.ndim > 2:
-        raise ValueError(f"Matrix must be at most 2-dimensional, got {matrix.ndim} instead")
-    elif torch.any(torch.isnan(matrix)):
+def validate_logits(matrix:torch.Tensor, name:str) -> torch.Tensor:    
+
+    if torch.any(torch.isnan(matrix)):
         raise ValueError("Matrix must not contain NaNs")
-    elif log and torch.any(torch.isinf(matrix)):
-        raise ValueError("Real matrix must not contain infinities")
-    elif not log and torch.any(1 <= matrix <= 0):
-        raise ValueError("Real matrix must be between 0 and 1")
-    elif log and torch.any(0 <= matrix):
-        raise ValueError("Log matrix must be negative")
+    elif torch.any(0 <= matrix):
+        raise ValueError("Logits must be <= 0")
+    
+    if name in ('Transition','Emission','Duration','Weights','Matrix'):
+        assert matrix.ndim == 2, ValueError(f'Probability Matrix of type {name} must be 2-dimensional')
+        if name == 'Transition':
+            n_rows, n_cols = matrix.shape
+            assert n_cols == n_rows, ValueError(f'For Transition Matrix specify rectangular probability matrix not {n_rows}x{n_cols}') 
+    elif name in ('Initial','Vector'):
+        assert matrix.ndim == 1, ValueError(f'Probability Vector of type {name} must be 1-dimensional')
+    elif name == 'Tensor':
+        assert matrix.ndim > 2, ValueError(f'Probability Tensor of type {name} must have more than 2-dimensions')
+    else:
+        raise NotImplementedError(f'This matrix type is not supported, please use one of {MAT_TYPES}')
+    
+    if not torch.all(matrix.logsumexp(-1) < 1e-3):
+        raise ValueError('Probabilities alongside last dimension must sum up to 1')
     else:
         return matrix
 
-def sample_prob_matrix(prior: float, device:torch.device, target_size: Tuple[int,...], semi: bool = False) -> torch.Tensor:
+def sample_logits(prior: float, target_size: Union[Tuple[int,...],torch.Size], device:torch.device, semi: bool = False) -> torch.Tensor:
     """Initialize a matrix of probabilities"""
     alphas = torch.full(size=target_size,
                         fill_value=prior,
@@ -201,6 +237,7 @@ def sample_prob_matrix(prior: float, device:torch.device, target_size: Tuple[int
     
     probs = torch.distributions.Dirichlet(alphas).sample()
     if semi:
+        # Usable only for 2D
         probs.fill_diagonal_(0)
         probs /= probs.sum(dim=-1, keepdim=True)
 
@@ -228,29 +265,14 @@ def validate_sequence(sequence:torch.Tensor,
         else:
             return sequence
     else:
-        if sequence.ndim != 2:
-            raise ValueError(f'Sequence must have shape (T,{n_features}). Got {sequence.shape}.')
+        if (n_dim:=sequence.ndim) != 2:
+            raise ValueError(f'Sequence must be 2-dimensional, got {n_dim} dims.')
         elif sequence.dtype != torch.double:
             raise ValueError(f'Sequence must be of type torch.float, got {sequence.dtype}')
-        elif sequence.shape[1] != n_features:
-            raise ValueError(f'Sequence must have shape (T,{n_features}). Got {sequence.shape}.')
+        elif (T:=sequence.shape[1]) != n_features:
+            raise ValueError(f'Second dimension corresponds to {n_features} model features. Got {T} features.')
         else:
             return sequence           
-
-def validate_means(means: torch.Tensor, n_states: int, n_features: int, n_components: Optional[int]=None) -> torch.Tensor:
-    """Do basic checks on matrix mean sizes and values"""
-    valid_shape = (n_states, n_features) if n_components is None else (n_states, n_components, n_features)
-
-    if (n_dim:=means.ndim) != (v_dim:=len(valid_shape)):
-        raise ValueError(f"Tensor must be {v_dim}D, got {n_dim}D instead")
-    elif (m_shape:=means.shape) != valid_shape:
-        raise ValueError(f"Tensor must have shape {valid_shape}, got {m_shape} instead")
-    elif torch.any(torch.isnan(means)):
-        raise ValueError("means must not contain NaNs")
-    elif torch.any(torch.isinf(means)):
-        raise ValueError("means must not contain infinities")
-    else:
-        return means
     
 def validate_lambdas(lambdas: torch.Tensor, n_states: int, n_features: int) -> torch.Tensor:
     """Do basic checks on matrix mean sizes and values"""

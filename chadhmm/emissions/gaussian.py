@@ -4,7 +4,7 @@ import torch
 from torch.distributions import MultivariateNormal
 
 from .base_emiss import BaseEmission # type: ignore
-from ..utils import ContextualVariables, validate_means, validate_covars, fill_covars # type: ignore
+from ..utils import ContextualVariables, validate_covars, fill_covars # type: ignore
 
 
 class GaussianEmissions(BaseEmission):
@@ -44,23 +44,17 @@ class GaussianEmissions(BaseEmission):
     def __init__(self, 
                  n_dims: int,
                  n_features: int,
-                 params_init: bool = True,
                  k_means: bool = False,
                  covariance_type: COVAR_TYPES_HINT = 'full',
                  min_covar: float = 1e-3,
-                 seed: Optional[int] = None,
                  device: Optional[torch.device] = None):
         
-        super().__init__(n_dims, n_features, False, seed, device)
+        BaseEmission.__init__(self,n_dims,n_features,False,device)
 
         self.min_covar = min_covar
         self.covariance_type = covariance_type
         self.k_means = k_means
-        if params_init:
-            self._means, self._covs = self.sample_emissions_params()
-            
-    def __str__(self):
-        return f'GaussianEmissions(n_dims={self.n_dims}, n_features={self.n_features})'        
+        self._means, self._covs = self.sample_emission_params()
 
     @property
     def means(self) -> torch.Tensor:
@@ -68,8 +62,9 @@ class GaussianEmissions(BaseEmission):
     
     @means.setter
     def means(self, means: torch.Tensor):
-        valid_means = validate_means(means, self.n_dims, self.n_features)
-        self._means = valid_means.to(self.device)
+        target_size = (self.n_dims, self.n_features)
+        assert means.shape == target_size, ValueError(f'Means shape must be {target_size}, got {means.shape}')
+        self._means = means.to(self.device)
 
     @property
     def covs(self) -> torch.Tensor:
@@ -85,18 +80,14 @@ class GaussianEmissions(BaseEmission):
     def pdf(self) -> MultivariateNormal:
         return MultivariateNormal(self.means,self.covs)
     
-    @property
-    def params(self):
-        return {'means': self.means, 
-                'covs': self.covs}
-    
     def map_emission(self,x):
-        x_batched = x.unsqueeze(1).expand(-1,self.n_dims,-1)
+        b_size = (-1,self.n_dims,-1) if x.ndim == 2 else (self.n_dims,-1)
+        x_batched = x.unsqueeze(-2).expand(b_size)
         return self.pdf.log_prob(x_batched)
     
-    def sample_emissions_params(self,X=None,seed=None):
+    def sample_emission_params(self,X=None):
         if X is not None:
-            means = self._sample_kmeans(X, seed) if self.k_means else X.mean(dim=0).expand(self.n_dims,-1).clone()
+            means = self._sample_kmeans(X) if self.k_means else X.mean(dim=0).expand(self.n_dims,-1).clone()
             centered_data = X - X.mean(dim=0)
             covs = (torch.mm(centered_data.T, centered_data) / (X.shape[0] - 1)).expand(self.n_dims,-1,-1).clone()
         else:
@@ -109,9 +100,9 @@ class GaussianEmissions(BaseEmission):
 
         return means, covs
     
-    def update_emission_params(self,X,gamma,theta=None):
-        self._means.copy_(self._compute_means(X,gamma,theta))
-        self._covs.copy_(self._compute_covs(X,gamma,theta))
+    def update_emission_params(self,X,posterior,theta=None):
+        self._means.copy_(self._compute_means(X,posterior,theta))
+        self._covs.copy_(self._compute_covs(X,posterior,theta))
     
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
         """Sample cluster means from K Means algorithm"""
@@ -122,7 +113,7 @@ class GaussianEmissions(BaseEmission):
 
     def _compute_means(self,
                        X:List[torch.Tensor],
-                       gamma:List[torch.Tensor],
+                       posterior:List[torch.Tensor],
                        theta:Optional[ContextualVariables]) -> torch.Tensor:
         """Compute the means for each hidden state"""
         new_mean = torch.zeros(size=(self.n_dims, self.n_features), 
@@ -133,7 +124,7 @@ class GaussianEmissions(BaseEmission):
                             dtype=torch.float64, 
                             device=self.device)
         
-        for seq,gamma_val in zip(X,gamma):
+        for seq,gamma_val in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent 
                 raise NotImplementedError('Contextualized emissions not implemented for GaussianEmissions')
@@ -145,7 +136,7 @@ class GaussianEmissions(BaseEmission):
     
     def _compute_covs(self, 
                       X:List[torch.Tensor],
-                      gamma:List[torch.Tensor],
+                      posterior:List[torch.Tensor],
                       theta:Optional[ContextualVariables]) -> torch.Tensor:
         """Compute the covariances for each component."""
         new_covs = torch.zeros(size=(self.n_dims,self.n_features, self.n_features), 
@@ -156,7 +147,7 @@ class GaussianEmissions(BaseEmission):
                             dtype=torch.float64, 
                             device=self.device)
 
-        for seq,gamma_val in zip(X,gamma):
+        for seq,gamma_val in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent 
                 raise NotImplementedError('Contextualized emissions not implemented for GaussianEmissions')

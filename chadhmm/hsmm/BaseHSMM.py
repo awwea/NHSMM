@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod, abstractproperty
-from typing import Optional, List, Tuple, Dict, Sequence , Literal
+from typing import Optional, List, Tuple, Dict, Sequence , Literal, Union
 
 import torch
 import numpy as np
 
-from ..stochastic_matrix import ProbabilityVector, TransitionMatrix, DurationMatrix # type: ignore
-from ..utils import FittedModel,ConvergenceHandler, Observations, ContextualVariables, log_normalize, sequence_generator, DECODERS, INFORM_CRITERIA # type: ignore
-
+from ..stochastic_matrix import StochasticTensor # type: ignore
+from ..utils import (Multiprocessor, FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
+log_normalize, sequence_generator, 
+DECODERS, INFORM_CRITERIA) # type: ignore
 
 class BaseHSMM(ABC):
     """
@@ -14,16 +15,10 @@ class BaseHSMM(ABC):
     ----------
     A Hidden Semi-Markov Model (HSMM) subclass that provides a foundation for building specific HMM models. HSMM is not assuming that the duration of each state is geometrically distributed, 
     but rather that it is distributed according to a general distribution. This duration is also reffered to as the sojourn time.
-
-    Parameters:
-    ----------
-    n_states (int): Number of hidden states in the model.
-    n_emissions (int): Number of emissions in the model.
     """
     def __init__(self,
                  n_states: int,
                  max_duration: int,
-                 params_init: bool = False,
                  alpha: float = 1.0,
                  seed: Optional[int] = None,
                  device: Optional[torch.device] = None):
@@ -31,84 +26,43 @@ class BaseHSMM(ABC):
         self.n_states = n_states
         self.max_duration = max_duration
         self.alpha = alpha
-        self.seed = seed
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
 
-        if params_init:
-            self._initial_vector, self._transition_matrix, self._duration_matrix = self.sample_chain_params(seed)
+        self._seed_gen = SeedGenerator(seed)
+        self._initial_vector, self._transition_matrix, self._duration_matrix = self.sample_chain_params(self.alpha)
 
     @property
-    def duration_matrix(self) -> DurationMatrix:
-        try:
-            return self._duration_matrix
-        except AttributeError:
-            raise AttributeError('Duration matrix not initialized')
+    def seed(self):
+        self._seed_gen.seed
+
+    @property
+    def duration_matrix(self) -> StochasticTensor:
+        return self._duration_matrix
 
     @duration_matrix.setter
     def duration_matrix(self, matrix):
-        assert (self.n_states,) == matrix.shape, 'Matrix dimensions differ from HMM model'
-        if isinstance(matrix, DurationMatrix):
-            self._duration_matrix = matrix
-        elif isinstance(matrix, torch.Tensor):
-            self._duration_matrix = DurationMatrix(n_states=self.n_states, 
-                                                   max_dur=self.max_duration,
-                                                   matrix=matrix)
-        else:
-            raise NotImplementedError('Matrix type not supported')
+        self._duration_matrix.logits = matrix
         
     @property
-    def transition_matrix(self) -> TransitionMatrix:
-        try:
-            return self._transition_matrix
-        except AttributeError:
-            raise AttributeError('Transition matrix not initialized')
+    def transition_matrix(self) -> StochasticTensor:
+        return self._transition_matrix
 
     @transition_matrix.setter
     def transition_matrix(self, matrix):
-        assert (self.n_states,self.n_states) == matrix.shape, 'Matrix dimensions differ from HMM model'
-        if isinstance(matrix, TransitionMatrix):
-            self._transition_matrix = matrix
-        elif isinstance(matrix, torch.Tensor):
-            self._transition_matrix = TransitionMatrix(n_states=self.n_states,
-                                                       matrix=matrix,
-                                                       device=self.device)
-        else:
-            raise NotImplementedError('Matrix type not supported')
+        self._transition_matrix.logits = matrix
 
     @property
-    def initial_vector(self) -> ProbabilityVector:
-        try:
-            return self._initial_vector
-        except AttributeError:
-            raise AttributeError('Initial vector not initialized')
+    def initial_vector(self) -> StochasticTensor:
+        return self._initial_vector
 
     @initial_vector.setter
     def initial_vector(self, vector):
-        assert (self.n_states,) == vector.shape, 'Matrix dimensions differ from HMM model'
-        if isinstance(vector, ProbabilityVector):
-            self._initial_vector = vector
-        elif isinstance(vector, torch.Tensor):
-            self._initial_vector = ProbabilityVector(n_states=self.n_states, 
-                                                     vector=vector,
-                                                     device=self.device)
-        else:
-            raise NotImplementedError('Matrix type not supported')
-        
-    @property
-    def view_params(self):
-        """Print the model parameters."""
-        for param in self.params.values():
-            param.view()
-            print('\n')
+        self._initial_vector.logits = vector
         
     @property
     def _check_params(self):
         """Check if the model parameters are set."""
         return self.params
-    
-    @abstractproperty
-    def __str__(self):
-        pass
 
     @abstractproperty
     def params(self) -> Dict[str, torch.Tensor]:
@@ -126,7 +80,7 @@ class BaseHSMM(ABC):
         pass
 
     @abstractmethod
-    def map_emission(self, emission:torch.Tensor) -> torch.Tensor:
+    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
         """Get emission probabilities for a given sequence of observations."""
         pass
 
@@ -145,11 +99,11 @@ class BaseHSMM(ABC):
         """Update the emission parameters."""
         pass
 
-    def sample_chain_params(self, seed: Optional[int] = None) -> Tuple[ProbabilityVector, TransitionMatrix, DurationMatrix]:
+    def sample_chain_params(self, alpha:float = 1) -> Tuple[StochasticTensor, StochasticTensor, StochasticTensor]:
         """Initialize the parameters of Semi-Markov Chain."""
-        return (ProbabilityVector(self.n_states, rand_seed=seed, alpha=self.alpha, device=self.device), 
-                TransitionMatrix(self.n_states, rand_seed=seed, alpha=self.alpha, device=self.device, semi_markov=True),
-                DurationMatrix(self.n_states,self.max_duration, rand_seed=seed, alpha=self.alpha, device=self.device))
+        return (StochasticTensor.from_dirichlet('Initial',(self.n_states,),self.device,False,alpha), 
+                StochasticTensor.from_dirichlet('Transition',(self.n_states,self.n_states),self.device,True,alpha),
+                StochasticTensor.from_dirichlet('Duration',(self.n_states,self.max_duration),self.device,False,alpha))
     
     def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
         """Convert a sequence of observations to an Observations object."""
@@ -427,9 +381,9 @@ class BaseHSMM(ABC):
         """Compute the updated parameters for the model."""
         log_gamma, log_xi, log_eta = self._compute_posteriors(X)
 
-        self._initial_vector.matrix.copy_(self._accum_pi(log_gamma))
-        self._transition_matrix.matrix.copy_(self._accum_A(log_xi))
-        self._duration_matrix.matrix.copy_(self._accum_D(log_eta))
+        self._initial_vector._logits.copy_(self._accum_pi(log_gamma))
+        self._transition_matrix._logits.copy_(self._accum_A(log_xi))
+        self._duration_matrix._logits.copy_(self._accum_D(log_eta))
         self.update_B_params(X.X,log_gamma,theta)
 
     def _viterbi(self, X:Observations) -> Sequence[torch.Tensor]:

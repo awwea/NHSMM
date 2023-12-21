@@ -11,5 +11,5 @@ If you have any suggestions, please let me know. I'm open to all ideas.
 # Import HMM objects
 from .hmm import CategoricalHMM, GaussianHMM, GaussianMixtureHMM
 from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM
-from .MixtureModels import GaussianMixtureModel
-from .stochastic_matrix import TransitionMatrix, EmissionMatrix, TransitionMatrix, WeightsMatrix, DurationMatrix, ProbabilityVector
+from .mixture_models import GaussianMixtureModel
+from .stochastic_matrix import StochasticTensor

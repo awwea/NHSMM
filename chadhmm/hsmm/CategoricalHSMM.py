@@ -1,5 +1,4 @@
 from typing import Optional
-
 import torch
 
 from .BaseHSMM import BaseHSMM # type: ignore
@@ -31,29 +30,25 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
         Whether to print progress logs during fitting.
     """
     def __init__(self,
-                 n_states: int,
-                 n_emissions: int,
-                 max_duration: int,
-                 alpha: float = 1.0,
-                 params_init: bool = False,
-                 seed: Optional[int] = None, 
-                 device: Optional[torch.device] = None):
+                 n_states:int,
+                 n_emissions:int,
+                 max_duration:int,
+                 alpha:float = 1.0,
+                 seed:Optional[int] = None, 
+                 device:Optional[torch.device] = None):
         
-        BaseHSMM.__init__(self,n_states,max_duration,params_init,alpha,seed,device)
+        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed,device)
         
-        CategoricalEmissions.__init__(self,n_states,n_emissions,params_init,alpha,seed,device)
-
-    def __str__(self):
-        return f'CategoricalHSMM(n_states={self.n_states}, max_duration{self.max_duration}, n_emissions={self.n_features})'
+        CategoricalEmissions.__init__(self,n_states,n_emissions,alpha,device)
 
     @property
     def params(self):
         """Returns the parameters of the model."""
         return {
-            'pi': self.initial_vector.matrix,
-            'A': self.transition_matrix.matrix,
-            'D': self.duration_matrix.matrix,
-            'B': self.emission_matrix.matrix
+            'pi': self.initial_vector.logits,
+            'A': self.transition_matrix.logits,
+            'D': self.duration_matrix.logits,
+            'B': self.emission_matrix.logits
         }
 
     @property    
@@ -78,7 +73,7 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
         return CategoricalEmissions.map_emission(self,x)
 
     def sample_B_params(self,X,seed=None):
-        self._emission_matrix = CategoricalEmissions.sample_emissions_params(self,X,seed)
+        self._emission_matrix = CategoricalEmissions.sample_emission_params(self,X,seed)
 
     def update_B_params(self,X,log_gamma,theta):
         gamma = [torch.exp(gamma) for gamma in log_gamma]

@@ -17,14 +17,10 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
         Number of hidden states in the model.
     n_features (int): 
         Number of emissions in the model.
-    random_state (int):
-        Random seed for reproducibility.
-    params_init (bool):
-        Whether to initialize the model parameters.
     alpha (float):
         Dirichlet concentration parameter for the prior over initial distribution, transition amd emission probabilities.
-    verbose (bool):
-        Whether to print progress logs during fitting.
+    seed (int):
+        Random seed for reproducibility.
     device (torch.device):
         Device on which to fit the model.
     """
@@ -33,23 +29,19 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
                  n_states: int,
                  n_features: int,
                  alpha: float = 1.0,
-                 params_init: bool = False,
                  seed: Optional[int] = None, 
                  device: Optional[torch.device] = None):
         
-        BaseHMM.__init__(self,n_states,params_init,alpha,seed,device)
+        BaseHMM.__init__(self,n_states,alpha,seed,device)
         
-        CategoricalEmissions.__init__(self,n_states,n_features,params_init,alpha,seed,device)
-        
-    def __str__(self):
-        return f'CategoricalHMM(n_states={self.n_states}, n_feautures={self.n_features})'
+        CategoricalEmissions.__init__(self,n_states,n_features,alpha,device)
 
     @property
     def params(self):
         return {
-            'pi': self.initial_vector.matrix,
-            'A': self.transition_matrix.matrix,
-            'B': self.emission_matrix.matrix
+            'pi': self.initial_vector.logits,
+            'A': self.transition_matrix.logits,
+            'B': self.emission_matrix.logits
         }
 
     @property
@@ -68,13 +60,13 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
         CategoricalEmissions.update_emission_params(self,X,gamma,theta)
 
-    def check_sequence(self,sequence):
-        return validate_sequence(sequence,True,self.n_features)
+    def check_sequence(self,X):
+        return validate_sequence(X,True,self.n_features)
 
     def map_emission(self,x):
         return CategoricalEmissions.map_emission(self,x)
 
-    def sample_B_params(self,X,seed=None):
-        self._emission_matrix = CategoricalEmissions.sample_emissions_params(self,X,seed)
+    def sample_B_params(self,X=None):
+        self._emission_matrix = CategoricalEmissions.sample_emission_params(self,X)
 
 
