@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from typing import Optional, List, Literal, Dict
 from .emissions import GaussianMixtureEmissions
-from .utils import FittedModel, ConvergenceHandler, INFORM_CRITERIA, validate_sequence
+from .utils import FittedModel, ConvergenceHandler, INFORM_CRITERIA
 
 
 class GaussianMixtureModel(GaussianMixtureEmissions):
@@ -69,7 +69,7 @@ class GaussianMixtureModel(GaussianMixtureEmissions):
             lengths:Optional[List[int]] = None,
             theta:Optional[torch.Tensor] = None) -> Dict[int,FittedModel]:
         """Fit the model to the data."""
-        X_valid = validate_sequence(X,False,self.n_features)
+        X_valid = GaussianMixtureEmissions.check_constraints(self,X)
         X_vec = list(torch.split(X_valid, lengths)) if lengths is not None else [X_valid]
 
         self.conv = ConvergenceHandler(tol=tol,

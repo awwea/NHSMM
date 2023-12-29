@@ -21,13 +21,6 @@ class CategoricalEmissions(BaseEmission):
         Dirichlet concentration parameter for the prior over emission probabilities.
     device (torch.device):
         Device on which to fit the model.
-
-    Attributes:
-    ----------
-    emission_matrix (EmissionMatrix):
-        Emission matrix representing the categorical distribution.
-    pdf (Categorical):
-        Probability Mass function of the categorical distribution.
     """
 
     def __init__(self,
@@ -36,7 +29,7 @@ class CategoricalEmissions(BaseEmission):
                  alpha:float = 1.0,
                  device:Optional[torch.device] = None):
         
-        BaseEmission.__init__(self,n_dims,n_features,True,device)
+        BaseEmission.__init__(self,n_dims,n_features,device)
 
         self.alpha = alpha
         self._emission_matrix = self.sample_emission_params()
@@ -86,7 +79,7 @@ class CategoricalEmissions(BaseEmission):
                 #TODO: Implement contextualized emissions
                 raise NotImplementedError('Contextualized emissions not implemented for CategoricalEmissions')
             else:
-                masks = seq.view(1,-1) == torch.arange(end=self.n_features, device=self.device).view(-1,1)
+                masks = seq.view(1,-1) == self.pdf.enumerate_support(expand=False)
                 for i,mask in enumerate(masks):
                     masked_gamma = gamma_val[mask]
                     emission_mat[:,i] += masked_gamma.sum(dim=0)

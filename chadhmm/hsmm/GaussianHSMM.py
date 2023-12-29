@@ -2,9 +2,7 @@ from typing import Optional, Literal
 import torch
 
 from .BaseHSMM import BaseHSMM # type: ignore
-from ..emissions.gaussian_mix import GaussianMixtureEmissions # type: ignore
-from ..emissions import GaussianEmissions # type: ignore
-from ..utils import validate_sequence # type: ignore
+from ..emissions import GaussianEmissions, GaussianMixtureEmissions # type: ignore
 
 
 class GaussianHSMM(BaseHSMM, GaussianEmissions):
@@ -80,8 +78,8 @@ class GaussianHSMM(BaseHSMM, GaussianEmissions):
     def dof(self):
         return self.n_states**2 - 1 + self.means.numel() + self.covs.numel() 
     
-    def check_sequence(self,sequence):
-        return validate_sequence(sequence,False,self.n_features)
+    def check_sequence(self,X):
+        return GaussianEmissions.check_constraints(self,X)
     
     def map_emission(self,x):
         return GaussianEmissions.map_emission(self,x)
@@ -172,8 +170,8 @@ class GaussianMixtureHSMM(BaseHSMM, GaussianMixtureEmissions):
     def dof(self):
         return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self.means.numel() + self.covs.numel() 
     
-    def check_sequence(self,sequence):
-        return validate_sequence(sequence,False,self.n_features)
+    def check_sequence(self,X):
+        return GaussianMixtureEmissions.check_constraints(self,X)
     
     def map_emission(self,x):
         return GaussianMixtureEmissions.map_emission(self,x)

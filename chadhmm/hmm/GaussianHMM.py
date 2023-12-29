@@ -1,9 +1,8 @@
 import torch
 from typing import Optional, Literal
+
 from .BaseHMM import BaseHMM # type: ignore
-from ..emissions.gaussian_mix import GaussianMixtureEmissions # type: ignore
-from ..emissions import GaussianEmissions # type: ignore
-from ..utils import validate_sequence # type: ignore
+from ..emissions import GaussianEmissions, GaussianMixtureEmissions # type: ignore
 
 
 class GaussianHMM(BaseHMM, GaussianEmissions):
@@ -75,8 +74,8 @@ class GaussianHMM(BaseHMM, GaussianEmissions):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
         GaussianEmissions.update_emission_params(self,X,gamma,theta)
 
-    def check_sequence(self,sequence):
-        return validate_sequence(sequence,False,self.n_features)
+    def check_sequence(self,X):
+        return GaussianEmissions.check_constraints(self,X)
     
     def map_emission(self,x):
         return GaussianEmissions.map_emission(self,x)
@@ -165,8 +164,8 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
 
         GaussianMixtureEmissions.update_emission_params(self,X,posterior_vec,theta)
 
-    def check_sequence(self,sequence):
-        return validate_sequence(sequence,False,self.n_features)
+    def check_sequence(self,X):
+        return GaussianMixtureEmissions.check_constraints(self,X)
     
     def map_emission(self,x):
         return GaussianMixtureEmissions.map_emission(self,x)

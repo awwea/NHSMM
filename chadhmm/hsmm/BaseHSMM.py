@@ -9,6 +9,7 @@ from ..utils import (Multiprocessor, FittedModel, ContextualVariables, Convergen
 log_normalize, sequence_generator, 
 DECODERS, INFORM_CRITERIA) # type: ignore
 
+
 class BaseHSMM(ABC):
     """
     Base Class for Hidden Semi-Markov Model (HSMM)
@@ -118,7 +119,7 @@ class BaseHSMM(ABC):
         
         return Observations(n_samples,X_vec,log_probs,seq_lenghts,len(seq_lenghts))  
 
-    def check_theta(self, theta:torch.Tensor, X:Observations) -> ContextualVariables:
+    def to_contextuals(self, theta:torch.Tensor, X:Observations) -> ContextualVariables:
         """Returns the parameters of the model."""
         if (n_dim:=theta.ndim) != 2:
             raise ValueError(f'Context must be 2-dimensional. Got {n_dim}.')
@@ -152,7 +153,7 @@ class BaseHSMM(ABC):
         if sample_B_from_X:
             self.sample_B_params(X)
         X_valid = self.to_observations(X,lengths)
-        valid_theta = self.check_theta(theta,X_valid) if theta is not None else None
+        valid_theta = self.to_contextuals(theta,X_valid) if theta is not None else None
 
         self.conv = ConvergenceHandler(tol=tol,
                                        max_iter=max_iter,

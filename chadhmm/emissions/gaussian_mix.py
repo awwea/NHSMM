@@ -51,7 +51,7 @@ class GaussianMixtureEmissions(MixtureEmissions):
         self.k_means = k_means
         self.min_covar = min_covar
         self.covariance_type = covariance_type
-        self._means, self._covs = self.sample_emission_params(seed=seed)
+        self._means, self._covs = self.sample_emission_params()
 
     @property
     def pdf(self) -> MultivariateNormal:
@@ -77,9 +77,9 @@ class GaussianMixtureEmissions(MixtureEmissions):
         valid_covars = validate_covars(new_covars, self.covariance_type, self.n_dims, self.n_features, self.n_components)
         self._covs = fill_covars(valid_covars, self.covariance_type, self.n_dims, self.n_features, self.n_components).to(self.device)
     
-    def sample_emission_params(self,X=None,seed=None) -> Tuple[torch.Tensor,torch.Tensor]:
+    def sample_emission_params(self,X=None) -> Tuple[torch.Tensor,torch.Tensor]:
         if X is not None:
-            means = self._sample_kmeans(X,seed) if self.k_means else X.mean(dim=0,keepdim=True).expand(self.n_dims,self.n_components,-1).clone()
+            means = self._sample_kmeans(X) if self.k_means else X.mean(dim=0,keepdim=True).expand(self.n_dims,self.n_components,-1).clone()
             centered_data = X - X.mean(dim=0)
             covs = (torch.mm(centered_data.T, centered_data) / (X.shape[0] - 1)).expand(self.n_dims,self.n_components,-1,-1).clone()
         else:

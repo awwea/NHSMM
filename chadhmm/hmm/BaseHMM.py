@@ -1,8 +1,9 @@
-from typing import Optional, Sequence, Tuple, Dict, List, Literal
+from typing import *
 from abc import ABC, abstractmethod, abstractproperty
 
 import torch
 import numpy as np
+import joblib # type: ignore
 
 from ..stochastic_matrix import StochasticTensor, MAT_OPS # type: ignore
 from ..utils import (Multiprocessor, FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
@@ -53,6 +54,7 @@ class BaseHMM(ABC):
     @property
     def _check_params(self):
         """Check if the model parameters are set."""
+        # TODO: Exception handling
         return self.params
 
     @abstractproperty
@@ -90,10 +92,27 @@ class BaseHMM(ABC):
         """Sample the emission parameters."""
         pass
 
-    # def sample(self, size:torch.Size) -> torch.Tensor:
-    #     start = self.initial_vector.pmf.sample()
-    #     self.transition_matrix.pmf.sample(size)
-    #     return torch.cat((start))
+    def dump_model(self, filename, **kwargs) -> List[str]:
+        """Dump model into file as python object and return the target files"""
+        return joblib.dump(self,filename,kwargs)
+
+    def sample(self, size:Sequence[int]) -> torch.Tensor:
+        """Sample from Markov chain, either 1D for a single sequence or 2D for multiple sample sequences given by 0 axis."""
+        n_dim = len(size)
+        if n_dim == 1:
+            start_sample = [1]
+        elif n_dim == 2:
+            start_sample = [size[0],1]
+        else:
+            raise ValueError(f'Size must be at most 2-dimensional, got {n_dim}.')
+        
+        sampled_paths = torch.hstack((self.initial_vector.pmf.sample(start_sample), 
+                                  torch.zeros(size,dtype=torch.int,device=self.device)))
+        
+        for row,step in enumerate(self.transition_matrix.pmf.sample(size)):
+            sampled_paths[row+1] = step[sampled_paths[row]]
+
+        return sampled_paths
         
     def sample_chain_params(self, alpha:float = 1.0) -> Tuple[StochasticTensor, StochasticTensor]:
         """Initialize the model parameters."""
@@ -113,7 +132,7 @@ class BaseHMM(ABC):
         
         return Observations(n_samples,X_vec,log_probs,seq_lenghts,len(seq_lenghts))  
     
-    def check_theta(self, theta:torch.Tensor, X:Observations) -> ContextualVariables:
+    def to_contextuals(self, theta:torch.Tensor, X:Observations) -> ContextualVariables:
         """Returns the parameters of the model."""
         if (n_dim:=theta.ndim) != 2:
             raise ValueError(f'Context must be 2-dimensional. Got {n_dim}.')
@@ -147,7 +166,7 @@ class BaseHMM(ABC):
         if sample_B_from_X:
             self.sample_B_params(X)
         X_valid = self.to_observations(X,lengths)
-        valid_theta = self.check_theta(theta,X_valid) if theta is not None else None
+        valid_theta = self.to_contextuals(theta,X_valid) if theta is not None else None
 
         self.conv = ConvergenceHandler(tol=tol,
                                        max_iter=max_iter,
@@ -181,7 +200,7 @@ class BaseHMM(ABC):
                                                 self.dof,
                                                 converged,
                                                 curr_log_like, 
-                                                self.ic(X,lengths),
+                                                self.ic(X,False,lengths).pop(),
                                                 self.params)
         
         if plot_conv:
@@ -192,8 +211,8 @@ class BaseHMM(ABC):
     def predict(self, 
                 X:torch.Tensor, 
                 lengths:Optional[List[int]] = None,
-                algorithm:Literal['map','viterbi'] = 'viterbi') -> Tuple[float, Sequence[torch.Tensor]]:
-        """Predict the most likely sequence of hidden states."""
+                algorithm:Literal['map','viterbi'] = 'viterbi') -> Tuple[List[float],Sequence[torch.Tensor]]:
+        """Predict the most likely sequence of hidden states. Returns log-likelihood and sequences"""
         self._check_params
         if algorithm not in DECODERS:
             raise ValueError(f'Unknown decoder algorithm {algorithm}')
@@ -202,25 +221,28 @@ class BaseHMM(ABC):
                    'map': self._map}[algorithm]
         
         X_valid = self.to_observations(X, lengths)
-        log_score = sum(self._compute_log_likelihood(X_valid))
+        log_score = self._compute_log_likelihood(X_valid)
         decoded_path = decoder(X_valid)
 
         return log_score, decoded_path
 
-    def score(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> float:
+    def score(self, 
+              X:torch.Tensor,
+              by_sample:bool=True,
+              lengths:Optional[List[int]]=None) -> List[float]:
         """Compute the joint log-likelihood"""
-        return sum(self._score_observations(X,lengths))
-    
-    def score_samples(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> List[float]:
-        """Compute the log-likelihood for each sequence"""
-        return self._score_observations(X,lengths)
+        self._check_params
+        log_likelihoods = self._compute_log_likelihood(self.to_observations(X, lengths))
+        res = log_likelihoods if by_sample else [sum(log_likelihoods)]
+        return res
 
-    def ic(self, 
-           X:torch.Tensor, 
-           lengths:Optional[List[int]] = None, 
-           criterion:Literal['AIC','BIC','HQC'] = 'AIC') -> float:
+    def ic(self,
+           X:torch.Tensor,
+           by_sample:bool=True,
+           lengths:Optional[List[int]] = None,
+           criterion:Literal['AIC','BIC','HQC'] = 'AIC') -> List[float]:
         """Calculates the information criteria for a given model."""
-        log_likelihood = self.score(X, lengths)
+        log_likelihood = self.score(X,by_sample,lengths)
         if criterion not in INFORM_CRITERIA:
             raise NotImplementedError(f'{criterion} is not a valid information criterion. Valid criteria are: {INFORM_CRITERIA}')
         
@@ -228,7 +250,11 @@ class BaseHMM(ABC):
                              'BIC': lambda log_likelihood, dof: -2.0 * log_likelihood + dof * np.log(X.shape[0]),
                              'HQC': lambda log_likelihood, dof: -2.0 * log_likelihood + 2.0 * dof * np.log(np.log(X.shape[0]))}[criterion]
         
-        return criterion_compute(log_likelihood, self.dof)
+        log_like_samples = []
+        for sample_log_like in log_likelihood:
+            log_like_samples.append(criterion_compute(sample_log_like, self.dof))
+
+        return log_like_samples
     
     def _forward(self, X:Observations) -> List[torch.Tensor]:
         """Forward pass of the forward-backward algorithm."""
@@ -370,11 +396,6 @@ class BaseHMM(ABC):
         for gamma in gamma_vec:
             map_paths.append(torch.argmax(gamma, dim=1))
         return map_paths
-
-    def _score_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> List[float]:
-        """Compute the log-likelihood for each sample sequence."""
-        self._check_params
-        return self._compute_log_likelihood(self.to_observations(X, lengths))
 
     def _compute_log_likelihood(self, X:Observations) -> List[float]:
         """Compute the log-likelihood of the given sequence."""

@@ -249,30 +249,7 @@ def log_normalize(matrix: torch.Tensor, dim:int=0) -> torch.Tensor:
 
 def sequence_generator(X: Observations) -> Generator[Tuple[int,torch.Tensor,torch.Tensor], None, None]:
     for X_len,seq,log_probs in zip(X.lengths,X.X,X.log_probs):
-        yield X_len, seq, log_probs
-
-def validate_sequence(sequence:torch.Tensor, 
-                      discrete:bool, 
-                      n_features:int) -> torch.Tensor:
-    """Do basic checks on sequence dimensions and values. Return a dataclass with the sequence and its properties."""
-    if discrete:
-        if (n_dim:=sequence.ndim) != 1:
-            raise ValueError(f'Sequence must be 1-dimensional, got shape {n_dim}')
-        elif sequence.dtype != torch.long:
-            raise ValueError(f'Sequence must be of type torch.long, got {sequence.dtype}')
-        elif torch.max(sequence).item() > (n_features-1):
-            raise ValueError('Invalid emission in sequence')
-        else:
-            return sequence
-    else:
-        if (n_dim:=sequence.ndim) != 2:
-            raise ValueError(f'Sequence must be 2-dimensional, got {n_dim} dims.')
-        elif sequence.dtype != torch.double:
-            raise ValueError(f'Sequence must be of type torch.float, got {sequence.dtype}')
-        elif (T:=sequence.shape[1]) != n_features:
-            raise ValueError(f'Second dimension corresponds to {n_features} model features. Got {T} features.')
-        else:
-            return sequence           
+        yield X_len, seq, log_probs       
     
 def validate_lambdas(lambdas: torch.Tensor, n_states: int, n_features: int) -> torch.Tensor:
     """Do basic checks on matrix mean sizes and values"""

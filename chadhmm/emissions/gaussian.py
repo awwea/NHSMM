@@ -1,7 +1,7 @@
-from typing import Optional, Literal, List
-from sklearn.cluster import KMeans # type: ignore
 import torch
 from torch.distributions import MultivariateNormal
+from sklearn.cluster import KMeans # type: ignore
+from typing import Optional, Literal, List
 
 from .base_emiss import BaseEmission # type: ignore
 from ..utils import ContextualVariables, validate_covars, fill_covars # type: ignore
@@ -19,22 +19,12 @@ class GaussianEmissions(BaseEmission):
         Number of components in the mixture model.
     n_features (int):
         Number of features in the data.
-    init_weights (bool):
-        Whether to initialize the mixture weights prior to fitting.
-    init_dist ():
-        Distribution to use for initializing the mixture weights.
-    alpha (float):
-        Dirichlet concentration parameter for the prior over mixture weights.
     k_means (bool):
         Whether to initialize the mixture means using K-Means clustering.
     min_covar (float):
         Minimum covariance for the mixture components.
     covariance_type (COVAR_TYPES):
         Type of covariance matrix to use for the mixture components. One of 'spherical', 'tied', 'diag', 'full'.
-    dims (Sequence[str]):
-        Names of the mixtures in the model.
-    seed (int):
-        Random seed for reproducibility.
     device (torch.device):
         Device to use for computations.
     """
@@ -49,7 +39,7 @@ class GaussianEmissions(BaseEmission):
                  min_covar: float = 1e-3,
                  device: Optional[torch.device] = None):
         
-        BaseEmission.__init__(self,n_dims,n_features,False,device)
+        BaseEmission.__init__(self,n_dims,n_features,device)
 
         self.min_covar = min_covar
         self.covariance_type = covariance_type

@@ -3,7 +3,7 @@ import torch
 
 from .BaseHSMM import BaseHSMM # type: ignore
 from ..emissions import CategoricalEmissions # type: ignore
-from ..utils import validate_sequence # type: ignore
+
 
 class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
     """
@@ -66,8 +66,8 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
         """Returns the degrees of freedom of the model."""
         return self.n_states ** 2 + self.n_states * self.n_features - 1
     
-    def check_sequence(self,sequence):
-        return validate_sequence(sequence,True,self.n_features)
+    def check_sequence(self,X):
+        return CategoricalEmissions.check_constraints(self,X)
         
     def map_emission(self,x):
         return CategoricalEmissions.map_emission(self,x)

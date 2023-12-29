@@ -2,14 +2,14 @@ from typing import Optional
 import torch
 
 from .BaseHMM import BaseHMM # type: ignore
-from ..emissions import CategoricalEmissions # type: ignore
+from ..emissions import PoissonEmissions # type: ignore
 
 
-class CategoricalHMM(BaseHMM, CategoricalEmissions):
+class PoissonHMM(BaseHMM, PoissonEmissions):
     """
-    Categorical Hidden Markov Model (HMM)
+    Poisson Hidden Markov Model (HMM)
     ----------
-    Hidden Markov model with categorical (discrete) emissions. This model is a special case of the HSMM model with a geometric duration distribution.
+    Hidden Markov model with emissions. This model is a special case of the HSMM model with a geometric duration distribution.
 
     Parameters:
     ----------
@@ -34,14 +34,14 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
         
         BaseHMM.__init__(self,n_states,alpha,seed,device)
         
-        CategoricalEmissions.__init__(self,n_states,n_features,alpha,device)
+        PoissonEmissions.__init__(self,n_states,n_features,device)
 
     @property
     def params(self):
         return {
             'pi': self.initial_vector.logits,
             'A': self.transition_matrix.logits,
-            'B': self.emission_matrix.logits
+            'rates': self.lambdas
         }
 
     @property
@@ -49,7 +49,7 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
         return {
             'initial_states': self.n_states,
             'transitions': self.n_states**2,
-            'emissions': self.n_states * self.n_features    
+            'rates': self.n_states * self.n_features   
         }
 
     @property
@@ -58,15 +58,13 @@ class CategoricalHMM(BaseHMM, CategoricalEmissions):
 
     def _update_B_params(self,X,log_gamma,theta):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
-        CategoricalEmissions.update_emission_params(self,X,gamma,theta)
+        PoissonEmissions.update_emission_params(self,X,gamma,theta)
 
     def check_sequence(self,X):
-        return CategoricalEmissions.check_constraints(self,X)
+        return PoissonEmissions.check_constraints(self,X)
 
     def map_emission(self,x):
-        return CategoricalEmissions.map_emission(self,x)
+        return PoissonEmissions.map_emission(self,x)
 
     def sample_B_params(self,X=None):
-        self._emission_matrix = CategoricalEmissions.sample_emission_params(self,X)
-
-
+        self._lambdas = PoissonEmissions.sample_emission_params(self,X)

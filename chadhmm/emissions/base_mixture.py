@@ -14,18 +14,17 @@ class MixtureEmissions(BaseEmission, ABC):
     """
 
     def __init__(self, 
-                 n_dims: int,
-                 n_features: int,
-                 n_components: int,
-                 alpha: float = 1.0,
-                 device: Optional[torch.device] = None):
-        
-        self.n_dims = n_dims
+                 n_dims:int,
+                 n_features:int,
+                 n_components:int,
+                 alpha:float = 1.0,
+                 device:Optional[torch.device] = None):
+
+        BaseEmission.__init__(self,n_dims,n_features,device)
+
         self.n_components = n_components
-        self.n_features = n_features
         self.alpha = alpha
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
-        self._weights = self.sample_weights()
+        self._weights = self.sample_weights(alpha)
 
     def __str__(self):
         return BaseEmission.__str__(self).replace(')',f', n_components={self.n_components})')
@@ -44,11 +43,11 @@ class MixtureEmissions(BaseEmission, ABC):
         return MixtureSameFamily(mixture_distribution = self.weights.pmf,
                                  component_distribution = self.pdf)
     
-    def sample_weights(self) -> StochasticTensor:
+    def sample_weights(self, alpha:float = 1.0) -> StochasticTensor:
         """Sample the weights for the mixture."""
         return StochasticTensor.from_dirichlet(name='Weights',
                                                size=(self.n_dims, self.n_components),
-                                               prior=self.alpha,
+                                               prior=alpha,
                                                device=self.device)    
 
     def map_emission(self, x:torch.Tensor) -> torch.Tensor:
@@ -66,7 +65,7 @@ class MixtureEmissions(BaseEmission, ABC):
                                                device=self.device)
 
             for t in range(n_observations):
-                log_responsibilities[:,:,t] = log_normalize(self.weights.logits + self.pdf.log_prob(seq[t]),1)
+                log_responsibilities[...,t] = log_normalize(self.weights.logits + self.pdf.log_prob(seq[t]),1)
 
             resp_vec.append(log_responsibilities)
         
