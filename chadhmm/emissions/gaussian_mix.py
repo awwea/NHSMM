@@ -43,10 +43,9 @@ class GaussianMixtureEmissions(MixtureEmissions):
                  alpha: float = 1.0,
                  covariance_type: COVAR_TYPES_HINT = 'full',
                  min_covar: float = 1e-3,
-                 seed: Optional[int] = None,
-                 device: Optional[torch.device] = None):
+                 seed: Optional[int] = None):
         
-        MixtureEmissions.__init__(self,n_dims,n_features,n_components,alpha,device)
+        MixtureEmissions.__init__(self,n_dims,n_features,n_components,alpha)
         
         self.k_means = k_means
         self.min_covar = min_covar
@@ -65,7 +64,7 @@ class GaussianMixtureEmissions(MixtureEmissions):
     def means(self, means: torch.Tensor):
         target_size = (self.n_dims,self.n_components,self.n_features)
         assert means.shape == target_size, ValueError(f'Means shape must be {target_size}, got {means.shape}')
-        self._means = means.to(self.device)
+        self._means = means
 
     @property
     def covs(self) -> torch.Tensor:
@@ -75,7 +74,7 @@ class GaussianMixtureEmissions(MixtureEmissions):
     def covs(self, new_covars: torch.Tensor):
         """Setter function for the covariance matrices."""
         valid_covars = validate_covars(new_covars, self.covariance_type, self.n_dims, self.n_features, self.n_components)
-        self._covs = fill_covars(valid_covars, self.covariance_type, self.n_dims, self.n_features, self.n_components).to(self.device)
+        self._covs = fill_covars(valid_covars, self.covariance_type, self.n_dims, self.n_features, self.n_components)
     
     def sample_emission_params(self,X=None) -> Tuple[torch.Tensor,torch.Tensor]:
         if X is not None:
@@ -84,17 +83,15 @@ class GaussianMixtureEmissions(MixtureEmissions):
             covs = (torch.mm(centered_data.T, centered_data) / (X.shape[0] - 1)).expand(self.n_dims,self.n_components,-1,-1).clone()
         else:
             means = torch.zeros(size=(self.n_dims, self.n_components, self.n_features), 
-                                dtype=torch.float64, 
-                                device=self.device)
+                                dtype=torch.float64)
         
             covs = self.min_covar + torch.eye(n=self.n_features, 
-                                              dtype=torch.float64,
-                                              device=self.device).expand((self.n_dims, self.n_components, self.n_features, self.n_features)).clone()
+                                              dtype=torch.float64).expand((self.n_dims, self.n_components, self.n_features, self.n_features)).clone()
 
         return means, covs
 
     def update_emission_params(self,X,posterior,theta=None):
-        self._weights._logits.copy_(self._compute_weights(posterior))
+        self._weights.param.data = self._compute_weights(posterior)
         self._means.copy_(self._compute_means(X,posterior,theta)) 
         self._covs.copy_(self._compute_covs(X,posterior,theta))
     
@@ -111,12 +108,10 @@ class GaussianMixtureEmissions(MixtureEmissions):
                        theta:Optional[ContextualVariables]=None) -> torch.Tensor:
         """Compute the means for each hidden state"""
         new_mean = torch.zeros(size=(self.n_dims,self.n_components,self.n_features), 
-                               dtype=torch.float64, 
-                               device=self.device)
+                               dtype=torch.float64)
         
         denom = torch.zeros(size=(self.n_dims,self.n_components,1), 
-                            dtype=torch.float64, 
-                            device=self.device)
+                            dtype=torch.float64)
         
         for seq,resp in zip(X,posterior):
             if theta is not None:
@@ -134,12 +129,10 @@ class GaussianMixtureEmissions(MixtureEmissions):
                       theta:Optional[ContextualVariables]=None) -> torch.Tensor:
         """Compute the covariances for each component."""
         new_covs = torch.zeros(size=(self.n_dims,self.n_components,self.n_features,self.n_features), 
-                               dtype=torch.float64, 
-                               device=self.device)
+                               dtype=torch.float64)
         
         denom = torch.zeros(size=(self.n_dims,self.n_components,1,1), 
-                            dtype=torch.float64, 
-                            device=self.device)
+                            dtype=torch.float64)
 
         for seq,resp in zip(X,posterior):
             if theta is not None:
@@ -152,7 +145,7 @@ class GaussianMixtureEmissions(MixtureEmissions):
                 denom += torch.sum(resp_expanded,dim=-2,keepdim=True)
 
         new_covs /= denom
-        new_covs += self.min_covar * torch.eye(self.n_features, device=self.device)
+        new_covs += self.min_covar * torch.eye(self.n_features)
         
         return new_covs
     

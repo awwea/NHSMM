@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from torch.distributions import Categorical # type: ignore
 from typing import Optional, List
 
@@ -7,7 +8,7 @@ from ..stochastic_matrix import StochasticTensor, MAT_OPS # type: ignore
 from ..utils import ContextualVariables, log_normalize # type: ignore
 
 
-class CategoricalEmissions(BaseEmission):
+class CategoricalEmissions(nn.Module,BaseEmission):
     """
     Categorical emission distribution for HMMs.
 
@@ -26,11 +27,10 @@ class CategoricalEmissions(BaseEmission):
     def __init__(self,
                  n_dims:int,
                  n_features:int,
-                 alpha:float = 1.0,
-                 device:Optional[torch.device] = None):
+                 alpha:float = 1.0):
         
-        BaseEmission.__init__(self,n_dims,n_features,device)
-
+        super().__init__()
+        BaseEmission.__init__(self,n_dims,n_features)
         self.alpha = alpha
         self._emission_matrix = self.sample_emission_params()
 
@@ -50,20 +50,18 @@ class CategoricalEmissions(BaseEmission):
         if X is not None:
             emission_freqs = torch.bincount(X) / X.shape[0]
             return StochasticTensor(name='Emission', 
-                                    logits=torch.log(emission_freqs.expand(self.n_dims,-1)),
-                                    device=self.device)
+                                    logits=torch.log(emission_freqs.expand(self.n_dims,-1)))
         else:
             return StochasticTensor.from_dirichlet(name='Emission',
                                                    size=(self.n_dims,self.n_features),
-                                                   prior=self.alpha,
-                                                   device=self.device)
+                                                   prior=self.alpha)
 
     def map_emission(self,x):
         batch_shaped = x.repeat(self.n_dims,1).T
         return self.pdf.log_prob(batch_shaped)
 
     def update_emission_params(self,X,posterior,theta=None):
-        self._emission_matrix._logits.copy_(self._compute_emprobs(X,posterior,theta))
+        self._emission_matrix.param.data = self._compute_emprobs(X,posterior,theta)
 
     def _compute_emprobs(self,
                         X:List[torch.Tensor],
@@ -71,8 +69,7 @@ class CategoricalEmissions(BaseEmission):
                         theta:Optional[ContextualVariables]) -> torch.Tensor: 
         """Compute the emission probabilities for each hidden state."""
         emission_mat = torch.zeros(size=(self.n_dims, self.n_features),
-                                   dtype=torch.float64,
-                                   device=self.device)
+                                   dtype=torch.float64)
 
         for seq,gamma_val in zip(X,posterior):
             if theta is not None:

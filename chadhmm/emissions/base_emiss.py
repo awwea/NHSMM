@@ -8,12 +8,10 @@ class BaseEmission(ABC):
 
     def __init__(self,
                  n_dims: int,
-                 n_features: int,
-                 device:Optional[torch.device] = None):
+                 n_features: int):
 
         self.n_dims = n_dims
         self.n_features = n_features
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
         
     def __str__(self):
         return f'{self.__class__.__name__}(n_dims={self.n_dims}, n_features={self.n_features})'

@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from torch.distributions import MultivariateNormal
 from sklearn.cluster import KMeans # type: ignore
 from typing import Optional, Literal, List
@@ -7,7 +8,7 @@ from .base_emiss import BaseEmission # type: ignore
 from ..utils import ContextualVariables, validate_covars, fill_covars # type: ignore
 
 
-class GaussianEmissions(BaseEmission):
+class GaussianEmissions(nn.Module,BaseEmission):
     """
     Gaussian Distribution for HMM emissions.    
     
@@ -36,39 +37,38 @@ class GaussianEmissions(BaseEmission):
                  n_features: int,
                  k_means: bool = False,
                  covariance_type: COVAR_TYPES_HINT = 'full',
-                 min_covar: float = 1e-3,
-                 device: Optional[torch.device] = None):
+                 min_covar: float = 1e-3):
         
-        BaseEmission.__init__(self,n_dims,n_features,device)
-
+        super().__init__()
+        BaseEmission.__init__(self,n_dims,n_features)
         self.min_covar = min_covar
         self.covariance_type = covariance_type
         self.k_means = k_means
         self._means, self._covs = self.sample_emission_params()
 
     @property
-    def means(self) -> torch.Tensor:
+    def means(self) -> nn.Parameter:
         return self._means
     
     @means.setter
-    def means(self, means: torch.Tensor):
+    def means(self, means:torch.Tensor):
         target_size = (self.n_dims, self.n_features)
         assert means.shape == target_size, ValueError(f'Means shape must be {target_size}, got {means.shape}')
-        self._means = means.to(self.device)
+        self._means.data = means
 
     @property
-    def covs(self) -> torch.Tensor:
+    def covs(self) -> nn.Parameter:
         return self._covs
 
     @covs.setter
-    def covs(self, new_covars: torch.Tensor):
+    def covs(self, new_covars:torch.Tensor):
         """Setter function for the covariance matrices."""
         valid_covars = validate_covars(new_covars, self.covariance_type, self.n_dims, self.n_features)
-        self._covs = fill_covars(valid_covars, self.covariance_type, self.n_dims, self.n_features).to(self.device)
+        self._covs.data = fill_covars(valid_covars, self.covariance_type, self.n_dims, self.n_features)
 
     @property
     def pdf(self) -> MultivariateNormal:
-        return MultivariateNormal(self.means,self.covs)
+        return MultivariateNormal(self.means.data,self.covs.data)
     
     def map_emission(self,x):
         b_size = (-1,self.n_dims,-1) if x.ndim == 2 else (self.n_dims,-1)
@@ -82,17 +82,15 @@ class GaussianEmissions(BaseEmission):
             covs = (torch.mm(centered_data.T, centered_data) / (X.shape[0] - 1)).expand(self.n_dims,-1,-1).clone()
         else:
             means = torch.zeros(size=(self.n_dims, self.n_features), 
-                                dtype=torch.float64, 
-                                device=self.device) 
+                                dtype=torch.float64) 
             covs = self.min_covar + torch.eye(n=self.n_features, 
-                                              dtype=torch.float64,
-                                              device=self.device).expand((self.n_dims, self.n_features, self.n_features)).clone()
+                                              dtype=torch.float64).expand((self.n_dims, self.n_features, self.n_features)).clone()
 
-        return means, covs
+        return nn.Parameter(means), nn.Parameter(covs)
     
     def update_emission_params(self,X,posterior,theta=None):
-        self._means.copy_(self._compute_means(X,posterior,theta))
-        self._covs.copy_(self._compute_covs(X,posterior,theta))
+        self._means.data = self._compute_means(X,posterior,theta)
+        self._covs.data = self._compute_covs(X,posterior,theta)
     
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
         """Sample cluster means from K Means algorithm"""
@@ -107,12 +105,10 @@ class GaussianEmissions(BaseEmission):
                        theta:Optional[ContextualVariables]) -> torch.Tensor:
         """Compute the means for each hidden state"""
         new_mean = torch.zeros(size=(self.n_dims, self.n_features), 
-                               dtype=torch.float64, 
-                               device=self.device)
+                               dtype=torch.float64)
         
         denom = torch.zeros(size=(self.n_dims,1), 
-                            dtype=torch.float64, 
-                            device=self.device)
+                            dtype=torch.float64)
         
         for seq,gamma_val in zip(X,posterior):
             if theta is not None:
@@ -130,12 +126,10 @@ class GaussianEmissions(BaseEmission):
                       theta:Optional[ContextualVariables]) -> torch.Tensor:
         """Compute the covariances for each component."""
         new_covs = torch.zeros(size=(self.n_dims,self.n_features, self.n_features), 
-                               dtype=torch.float64, 
-                               device=self.device)
+                               dtype=torch.float64)
         
         denom = torch.zeros(size=(self.n_dims,1,1), 
-                            dtype=torch.float64, 
-                            device=self.device)
+                            dtype=torch.float64)
 
         for seq,gamma_val in zip(X,posterior):
             if theta is not None:
@@ -148,6 +142,6 @@ class GaussianEmissions(BaseEmission):
                 denom += torch.sum(gamma_expanded,dim=-2,keepdim=True)
 
         new_covs /= denom
-        new_covs += self.min_covar * torch.eye(self.n_features, device=self.device)
+        new_covs += self.min_covar * torch.eye(self.n_features)
 
         return new_covs

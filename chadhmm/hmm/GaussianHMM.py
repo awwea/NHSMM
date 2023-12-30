@@ -1,11 +1,12 @@
 import torch
+import torch.nn as nn
 from typing import Optional, Literal
 
 from .BaseHMM import BaseHMM # type: ignore
 from ..emissions import GaussianEmissions, GaussianMixtureEmissions # type: ignore
 
 
-class GaussianHMM(BaseHMM, GaussianEmissions):
+class GaussianHMM(BaseHMM):
     """
     Gaussian Hidden Markov Model (Gaussian HMM)
     ----------
@@ -31,18 +32,16 @@ class GaussianHMM(BaseHMM, GaussianEmissions):
     COVAR_TYPES = Literal['spherical', 'tied', 'diag', 'full']
 
     def __init__(self,
-                 n_states: int,
-                 n_features: int,
-                 k_means: bool = False,
-                 alpha: float = 1.0,
-                 covariance_type: COVAR_TYPES = 'full',
-                 min_covar: float = 1e-3,
-                 seed: Optional[int] = None,
-                 device: Optional[torch.device] = None):
+                 n_states:int,
+                 n_features:int,
+                 k_means:bool = False,
+                 alpha:float = 1.0,
+                 covariance_type:COVAR_TYPES = 'full',
+                 min_covar:float = 1e-3,
+                 seed:Optional[int] = None):
 
-        BaseHMM.__init__(self,n_states,alpha,seed,device)
-        
-        GaussianEmissions.__init__(self,n_states,n_features,k_means,covariance_type,min_covar,device)
+        BaseHMM.__init__(self,n_states,alpha,seed)
+        self.emissions = GaussianEmissions(n_states,n_features,k_means,covariance_type,min_covar)
 
     @property
     def n_fit_params(self):
@@ -50,41 +49,43 @@ class GaussianHMM(BaseHMM, GaussianEmissions):
         return {
             'states': self.n_states,
             'transitions': self.n_states**2,
-            'means': self.n_states * self.n_features,
+            'means': self.n_states * self.emissions.n_features,
             'covars': {
                 'spherical': self.n_states,
-                'diag': self.n_states * self.n_features,
-                'full': self.n_states * self.n_features * (self.n_features + 1) // 2,
-                'tied': self.n_features * (self.n_features + 1) // 2,
-            }[self.covariance_type],
+                'diag': self.n_states * self.emissions.n_features,
+                'full': self.n_states * self.emissions.n_features * (self.emissions.n_features + 1) // 2,
+                'tied': self.emissions.n_features * (self.emissions.n_features + 1) // 2,
+            }[self.emissions.covariance_type],
         }
     
     @property
     def params(self):
-        return {'pi': self.initial_vector.logits,
-                'A': self.transition_matrix.logits,
-                'means': self.means, 
-                'covars': self.covs}
+        return nn.ParameterDict({
+            'pi': self.initial_vector.param,
+            'A': self.transition_matrix.param,
+            'means': self.means, 
+            'covars': self.covs
+        })
 
     @property
     def dof(self):
-        return self.n_states**2 - 1 + self.means.numel() + self.covs.numel() 
+        return self.n_states**2 - 1 + self.emissions.means.numel() + self.emissions.covs.numel() 
 
     def _update_B_params(self,X,log_gamma,theta):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
-        GaussianEmissions.update_emission_params(self,X,gamma,theta)
+        self.emissions.update_emission_params(X,gamma,theta)
 
     def check_sequence(self,X):
-        return GaussianEmissions.check_constraints(self,X)
+        return self.emissions.check_constraints(X)
     
     def map_emission(self,x):
-        return GaussianEmissions.map_emission(self,x)
+        return self.emissions.map_emission(x)
 
     def sample_B_params(self,X,seed=None):
-        self.means, self.covs = GaussianEmissions.sample_emission_params(self,X,seed)
+        self.means, self.covs = self.emissions.sample_emission_params(X,seed)
 
 
-class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
+class GaussianMixtureHMM(BaseHMM):
     """
     Gaussian Hidden Markov Model (Gaussian HMM)
     ----------
@@ -119,12 +120,10 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
                  alpha: float = 1.0,
                  covariance_type: COVAR_TYPES = 'full',
                  min_covar: float = 1e-3,
-                 seed: Optional[int] = None,
-                 device: Optional[torch.device] = None):
+                 seed: Optional[int] = None):
 
-        BaseHMM.__init__(self,n_states,alpha,seed,device)
-        
-        GaussianMixtureEmissions.__init__(self,n_states,n_features,n_components,k_means,alpha,covariance_type, min_covar,seed,device)
+        BaseHMM.__init__(self,n_states,alpha,seed)
+        self.emissions = GaussianMixtureEmissions(n_states,n_features,n_components,k_means,alpha,covariance_type, min_covar,seed)
 
     @property
     def n_fit_params(self):
@@ -132,14 +131,14 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
         fit_params_dict = {
             'states': self.n_states,
             'transitions': self.n_states**2,
-            'weights': self.n_states * self.n_components,
-            'means': self.n_states * self.n_features * self.n_components,
+            'weights': self.n_states * self.emissions.n_components,
+            'means': self.n_states * self.emissions.n_features * self.emissions.n_components,
             'covars': {
                 'spherical': self.n_states,
-                'diag': self.n_states * self.n_features,
-                'full': self.n_states * self.n_features * (self.n_features + 1) // 2,
-                'tied': self.n_features * (self.n_features + 1) // 2,
-            }[self.covariance_type],
+                'diag': self.n_states * self.emissions.n_features,
+                'full': self.n_states * self.emissions.n_features * (self.emissions.n_features + 1) // 2,
+                'tied': self.emissions.n_features * (self.emissions.n_features + 1) // 2,
+            }[self.emissions.covariance_type],
         }
 
         return fit_params_dict
@@ -148,27 +147,27 @@ class GaussianMixtureHMM(BaseHMM, GaussianMixtureEmissions):
     def params(self):
         return {'pi': self.initial_vector.logits,
                 'A': self.transition_matrix.logits,
-                'weights': self.weights.logits,
-                'means': self.means, 
-                'covars': self.covs}
+                'weights': self.emissions.weights.logits,
+                'means': self.emissions.means, 
+                'covars': self.emissions.covs}
 
     @property
     def dof(self):
-        return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self.means.numel() + self.covs.numel() 
+        return self.n_states**2 - 1 + self.n_states*self.emissions.n_components - self.n_states + self.emissions.means.numel() + self.emissions.covs.numel() 
 
     def _update_B_params(self,X,log_gamma,theta=None):
         posterior_vec = []
-        resp_vec = GaussianMixtureEmissions._compute_responsibilities(self,X)
+        resp_vec = self.emissions._compute_responsibilities(X)
         for resp,gamma_val in zip(resp_vec,log_gamma):
             posterior_vec.append(torch.exp(resp + gamma_val.T.unsqueeze(1)))
 
-        GaussianMixtureEmissions.update_emission_params(self,X,posterior_vec,theta)
+        self.emissions.update_emission_params(X,posterior_vec,theta)
 
     def check_sequence(self,X):
-        return GaussianMixtureEmissions.check_constraints(self,X)
+        return self.emissions.check_constraints(X)
     
     def map_emission(self,x):
-        return GaussianMixtureEmissions.map_emission(self,x)
+        return self.emissions.map_emission(x)
 
     def sample_B_params(self,X,seed=None):
-        self._means, self._covs = GaussianMixtureEmissions.sample_emission_params(self,X,seed)
+        self._means, self._covs = self.emissions.sample_emission_params(X,seed)

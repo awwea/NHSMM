@@ -2,6 +2,7 @@ from typing import Generator, Sequence, Tuple, Optional, List, Generator, Dict, 
 from dataclasses import dataclass, field
 
 import torch
+import torch.nn as nn
 from torch.multiprocessing import Process, Queue
 import matplotlib.pyplot as plt # type: ignore
 from prettytable import PrettyTable # type: ignore
@@ -20,7 +21,7 @@ class FittedModel:
     converged: bool
     log_likelihood: float
     AIC: float
-    params: Dict[str,torch.Tensor]
+    params: nn.ParameterDict
 
 @dataclass
 class Observations:
@@ -113,18 +114,15 @@ class ConvergenceHandler:
                  n_init:int, 
                  tol:float, 
                  post_conv_iter:int,
-                 device:torch.device, 
                  verbose:bool = True):
         
         self.tol = tol
         self.verbose = verbose
         self.post_conv_iter = post_conv_iter
-        self.device = device
         self.max_iter = max_iter
         self.score = torch.full(size=(max_iter+1,n_init),
                                 fill_value=float('nan'), 
-                                dtype=torch.float64,
-                                device=self.device)
+                                dtype=torch.float64)
         self.delta = self.score.clone()
 
     def __repr__(self):
@@ -228,12 +226,11 @@ def validate_logits(matrix:torch.Tensor, name:str) -> torch.Tensor:
     else:
         return matrix
 
-def sample_logits(prior: float, target_size: Union[Tuple[int,...],torch.Size], device:torch.device, semi: bool = False) -> torch.Tensor:
+def sample_logits(prior: float, target_size: Union[Tuple[int,...],torch.Size], semi: bool = False) -> torch.Tensor:
     """Initialize a matrix of probabilities"""
     alphas = torch.full(size=target_size,
                         fill_value=prior,
-                        dtype=torch.float64,
-                        device=device)
+                        dtype=torch.float64)
     
     probs = torch.distributions.Dirichlet(alphas).sample()
     if semi:

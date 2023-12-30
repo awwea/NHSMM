@@ -17,10 +17,9 @@ class MixtureEmissions(BaseEmission, ABC):
                  n_dims:int,
                  n_features:int,
                  n_components:int,
-                 alpha:float = 1.0,
-                 device:Optional[torch.device] = None):
+                 alpha:float = 1.0):
 
-        BaseEmission.__init__(self,n_dims,n_features,device)
+        BaseEmission.__init__(self,n_dims,n_features)
 
         self.n_components = n_components
         self.alpha = alpha

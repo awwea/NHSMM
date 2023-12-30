@@ -2,6 +2,7 @@ from typing import *
 from abc import ABC, abstractmethod, abstractproperty
 
 import torch
+import torch.nn as nn
 import numpy as np
 import joblib # type: ignore
 
@@ -11,7 +12,7 @@ log_normalize, sequence_generator,
 DECODERS, INFORM_CRITERIA) # type: ignore
 
 
-class BaseHMM(ABC):
+class BaseHMM(nn.Module,ABC):
     """
     Base Abstract Class for HMM
     ----------
@@ -21,13 +22,11 @@ class BaseHMM(ABC):
     def __init__(self,
                  n_states:int,
                  alpha:float = 1.0,
-                 seed:Optional[int] = None,
-                 device:Optional[torch.device] = None):
+                 seed:Optional[int] = None):
 
+        nn.Module.__init__(self)
         self.n_states = n_states
         self.alpha = alpha
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
-
         self._seed_gen = SeedGenerator(seed)
         self._initial_vector, self._transition_matrix = self.sample_chain_params(self.alpha)
 
@@ -58,7 +57,7 @@ class BaseHMM(ABC):
         return self.params
 
     @abstractproperty
-    def params(self) -> Dict[str, torch.Tensor]:
+    def params(self) -> nn.ParameterDict:
         """Returns the parameters of the model."""
         pass
 
@@ -107,7 +106,7 @@ class BaseHMM(ABC):
             raise ValueError(f'Size must be at most 2-dimensional, got {n_dim}.')
         
         sampled_paths = torch.hstack((self.initial_vector.pmf.sample(start_sample), 
-                                  torch.zeros(size,dtype=torch.int,device=self.device)))
+                                  torch.zeros(size,dtype=torch.int)))
         
         for row,step in enumerate(self.transition_matrix.pmf.sample(size)):
             sampled_paths[row+1] = step[sampled_paths[row]]
@@ -116,8 +115,8 @@ class BaseHMM(ABC):
         
     def sample_chain_params(self, alpha:float = 1.0) -> Tuple[StochasticTensor, StochasticTensor]:
         """Initialize the model parameters."""
-        return (StochasticTensor.from_dirichlet('Initial',(self.n_states,),self.device,False,alpha), 
-                StochasticTensor.from_dirichlet('Transition',(self.n_states,self.n_states),self.device,False,alpha))
+        return (StochasticTensor.from_dirichlet('Initial',(self.n_states,),False,alpha), 
+                StochasticTensor.from_dirichlet('Transition',(self.n_states,self.n_states),False,alpha))
 
     def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
         """Convert a sequence of observations to an Observations object."""
@@ -142,26 +141,25 @@ class BaseHMM(ABC):
             n_context, n_observations = theta.shape
             time_dependent = n_observations == X.n_samples
             adj_theta = torch.vstack((theta, torch.ones(size=(1,n_observations),
-                                                        dtype=torch.float64,
-                                                        device=self.device)))
+                                                        dtype=torch.float64)))
             if not time_dependent:
                 adj_theta = adj_theta.expand(n_context+1, X.n_samples)
 
             context_matrix = list(torch.split(adj_theta,X.lengths,1))
             return ContextualVariables(n_context, context_matrix, time_dependent) 
 
-    def fit(self,
-            X:torch.Tensor,
-            tol:float=1e-2,
-            max_iter:int=20,
-            n_init:int=1,
-            post_conv_iter:int=3,
-            ignore_conv:bool=False,
-            sample_B_from_X:bool=False,
-            verbose:bool=True,
-            plot_conv:bool=False,
-            lengths:Optional[List[int]]=None,
-            theta:Optional[torch.Tensor]=None) -> Dict[int, FittedModel]:
+    def train(self,
+              X:torch.Tensor,
+              tol:float=1e-2,
+              max_iter:int=20,
+              n_init:int=1,
+              post_conv_iter:int=3,
+              ignore_conv:bool=False,
+              sample_B_from_X:bool=False,
+              verbose:bool=True,
+              plot_conv:bool=False,
+              lengths:Optional[List[int]]=None,
+              theta:Optional[torch.Tensor]=None):
         """Fit the model to the given sequence using the EM algorithm."""
         if sample_B_from_X:
             self.sample_B_params(X)
@@ -172,7 +170,6 @@ class BaseHMM(ABC):
                                        max_iter=max_iter,
                                        n_init=n_init,
                                        post_conv_iter=post_conv_iter,
-                                       device=self.device,
                                        verbose=verbose)
 
         self._check_params
@@ -206,7 +203,7 @@ class BaseHMM(ABC):
         if plot_conv:
             self.conv.plot_convergence()
 
-        return distinct_models
+        return self
 
     def predict(self, 
                 X:torch.Tensor, 
@@ -261,12 +258,11 @@ class BaseHMM(ABC):
         alpha_vec = []
         for seq_len,_,log_probs in sequence_generator(X):
             log_alpha = torch.zeros(size=(seq_len,self.n_states), 
-                                    dtype=torch.float64,
-                                    device=self.device)
+                                    dtype=torch.float64)
             
-            log_alpha[0] = self._initial_vector + log_probs[0]
+            log_alpha[0] = self._initial_vector.param + log_probs[0]
             for t in range(1,seq_len):
-                log_alpha[t] = torch.logsumexp(log_alpha[t-1].reshape(-1,1) + self._transition_matrix, dim=0) + log_probs[t]
+                log_alpha[t] = torch.logsumexp(log_alpha[t-1].reshape(-1,1) + self._transition_matrix.param, dim=0) + log_probs[t]
 
             alpha_vec.append(log_alpha)
 
@@ -277,11 +273,10 @@ class BaseHMM(ABC):
         beta_vec = []
         for seq_len,_,log_probs in sequence_generator(X):
             log_beta = torch.zeros(size=(seq_len,self.n_states), 
-                               dtype=torch.float64,
-                               device=self.device)
+                               dtype=torch.float64)
             
             for t in reversed(range(seq_len-1)):
-                log_beta[t] = torch.logsumexp(self._transition_matrix + log_probs[t+1] + log_beta[t+1], dim=1)
+                log_beta[t] = torch.logsumexp(self._transition_matrix.param + log_probs[t+1] + log_beta[t+1], dim=1)
             
             beta_vec.append(log_beta)
 
@@ -300,11 +295,10 @@ class BaseHMM(ABC):
         xi_vec = []
         for (seq_len,_,log_probs),alpha,beta in zip(sequence_generator(X),log_alpha,log_beta):
             log_xi = torch.zeros(size=(seq_len-1, self.n_states, self.n_states),
-                                 dtype=torch.float64, 
-                                 device=self.device)
+                                 dtype=torch.float64)
             
             for t in range(seq_len-1):
-                log_xi[t] = alpha[t].reshape(-1,1) + self._transition_matrix + log_probs[t+1] + beta[t+1]
+                log_xi[t] = alpha[t].reshape(-1,1) + self._transition_matrix.param + log_probs[t+1] + beta[t+1]
 
             log_xi -= alpha[-1].logsumexp(dim=0)
             xi_vec.append(log_xi)
@@ -326,8 +320,7 @@ class BaseHMM(ABC):
     def _accum_pi(self, log_gamma:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the initial vector."""
         log_pi = torch.zeros(size=(self.n_states,),
-                             dtype=torch.float64, 
-                             device=self.device)
+                             dtype=torch.float64)
 
         for gamma in log_gamma:
             log_pi += gamma[0].exp()
@@ -337,8 +330,7 @@ class BaseHMM(ABC):
     def _accum_A(self, log_xi:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the transition matrix."""
         log_A = torch.zeros(size=(self.n_states,self.n_states),
-                             dtype=torch.float64, 
-                             device=self.device)
+                             dtype=torch.float64)
         
         for xi in log_xi:
             log_A += xi.exp().sum(dim=0)
@@ -353,8 +345,8 @@ class BaseHMM(ABC):
         log_gamma = self._gamma(log_alpha,log_beta)
         log_xi = self._xi(X,log_alpha,log_beta)
 
-        self._initial_vector._logits.copy_(self._accum_pi(log_gamma))
-        self._transition_matrix._logits.copy_(self._accum_A(log_xi))
+        self._initial_vector.param.data = self._accum_pi(log_gamma)
+        self._transition_matrix.param.data = self._accum_A(log_xi)
         self._update_B_params(X.X,log_gamma,theta)
 
         return sum(self._compute_log_likelihood(X))
@@ -364,19 +356,17 @@ class BaseHMM(ABC):
         viterbi_path_list = []
         for seq_len,_,log_probs in sequence_generator(X):
             viterbi_path = torch.empty(size=(seq_len,), 
-                                       dtype=torch.int32,
-                                       device=self.device)
+                                       dtype=torch.int32)
             
             viterbi_prob = torch.empty(size=(self.n_states, seq_len), 
-                                       dtype=torch.float64,
-                                       device=self.device)
+                                       dtype=torch.float64)
             psi = viterbi_prob.clone()
 
             # Initialize t=1
-            viterbi_prob[:,0] = self._initial_vector + log_probs[0]
+            viterbi_prob[:,0] = self._initial_vector.param + log_probs[0]
             for t in range(1,seq_len):
                 trans_seq = viterbi_prob[:,t-1] + log_probs[t]
-                trans_seq = self._transition_matrix + trans_seq.reshape((-1, 1))
+                trans_seq = self._transition_matrix.param + trans_seq.reshape((-1, 1))
                 viterbi_prob[:,t] = torch.max(trans_seq, dim=0).values
                 psi[:,t] = torch.argmax(trans_seq, dim=0)
 
