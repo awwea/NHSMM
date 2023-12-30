@@ -5,7 +5,7 @@ from .BaseHSMM import BaseHSMM # type: ignore
 from ..emissions import CategoricalEmissions # type: ignore
 
 
-class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
+class CategoricalHSMM(BaseHSMM):
     """
     Categorical Hidden semi-Markov Model (HSMM)
     ----------
@@ -16,7 +16,7 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
     ----------
     n_states (int):
         Number of hidden states in the model.
-    n_emissions (int): 
+    n_features (int): 
         Number of emissions in the model.
     seed (int):
         Random seed for reproducibility.
@@ -31,25 +31,13 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
     """
     def __init__(self,
                  n_states:int,
-                 n_emissions:int,
+                 n_features:int,
                  max_duration:int,
                  alpha:float = 1.0,
-                 seed:Optional[int] = None, 
-                 device:Optional[torch.device] = None):
+                 seed:Optional[int] = None):
         
-        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed,device)
-        
-        CategoricalEmissions.__init__(self,n_states,n_emissions,alpha,device)
-
-    @property
-    def params(self):
-        """Returns the parameters of the model."""
-        return {
-            'pi': self.initial_vector.logits,
-            'A': self.transition_matrix.logits,
-            'D': self.duration_matrix.logits,
-            'B': self.emission_matrix.logits
-        }
+        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed)
+        self.emissions = CategoricalEmissions(n_states,n_features,alpha)
 
     @property    
     def n_fit_params(self):
@@ -58,24 +46,24 @@ class CategoricalHSMM(BaseHSMM, CategoricalEmissions):
             'states': self.n_states,
             'transitions': self.n_states**2,
             'durations': self.n_states * self.max_duration,
-            'emissions': self.n_states * self.n_features
+            'emissions': self.n_states * self.emissions.n_features
         }
     
     @property
     def dof(self):
         """Returns the degrees of freedom of the model."""
-        return self.n_states ** 2 + self.n_states * self.n_features - 1
+        return self.n_states ** 2 + self.n_states * self.emissions.n_features - 1
     
     def check_sequence(self,X):
-        return CategoricalEmissions.check_constraints(self,X)
+        return self.emissions.check_constraints(X)
         
     def map_emission(self,x):
-        return CategoricalEmissions.map_emission(self,x)
+        return self.emissions.map_emission(x)
 
     def sample_B_params(self,X,seed=None):
-        self._emission_matrix = CategoricalEmissions.sample_emission_params(self,X,seed)
+        self._emission_matrix = self.emissions.sample_emission_params(X)
 
     def update_B_params(self,X,log_gamma,theta):
         gamma = [torch.exp(gamma) for gamma in log_gamma]
-        CategoricalEmissions.update_emission_params(self,X,gamma,theta)
+        self.emissions.update_emission_params(X,gamma,theta)
 

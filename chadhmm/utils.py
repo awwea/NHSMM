@@ -1,4 +1,4 @@
-from typing import Generator, Sequence, Tuple, Optional, List, Generator, Dict, Callable, Union
+from typing import Generator, Tuple, Optional, List, Generator, Dict, Callable, Union
 from dataclasses import dataclass, field
 
 import torch
@@ -38,33 +38,6 @@ class ContextualVariables:
     n_context: int
     matrix: List[torch.Tensor]
     time_dependent: bool = field(default=False)
-
-
-class Multiprocessor:
-
-    def __init__(self):
-        self.processes = []
-        self.queue = Queue()
-
-    @staticmethod
-    def _wrapper(func:Callable, queue:Queue, args, kwargs):
-        ret = func(*args, **kwargs)
-        queue.put(ret)
-
-    def run(self, func:Callable, name:str, *args, **kwargs):
-        args2 = [func, self.queue, args, kwargs]
-        p = Process(target=self._wrapper, name=name, args=args2)
-        self.processes.append(p)
-        p.start()
-
-    def wait(self):
-        rets = []
-        for p in self.processes:
-            ret = self.queue.get()
-            rets.append(ret)
-        for p in self.processes:
-            p.join()
-        return rets
 
 class SeedGenerator:
     def __init__(self, seed: Optional[int] = None):
@@ -128,7 +101,7 @@ class ConvergenceHandler:
     def __repr__(self):
         return f"""
         ConvergenceHandler(tol={self.tol},
-                            n_iters = {self.iter+1},
+                            n_iters = {self.max_iter+1},
                             post_conv_iter={self.post_conv_iter},
                             converged={self.converged},
                             verbose={self.verbose})

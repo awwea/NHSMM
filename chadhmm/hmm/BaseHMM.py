@@ -1,13 +1,12 @@
-from typing import *
+from typing import Optional,Sequence,List, Dict, Tuple, Literal
 from abc import ABC, abstractmethod, abstractproperty
 
 import torch
 import torch.nn as nn
 import numpy as np
-import joblib # type: ignore
 
-from ..stochastic_matrix import StochasticTensor, MAT_OPS # type: ignore
-from ..utils import (Multiprocessor, FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
+from ..stochastic_matrix import StochasticTensor # type: ignore
+from ..utils import (FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
 log_normalize, sequence_generator, 
 DECODERS, INFORM_CRITERIA) # type: ignore
 
@@ -28,38 +27,17 @@ class BaseHMM(nn.Module,ABC):
         self.n_states = n_states
         self.alpha = alpha
         self._seed_gen = SeedGenerator(seed)
-        self._initial_vector, self._transition_matrix = self.sample_chain_params(self.alpha)
-
-    @property
-    def transition_matrix(self) -> StochasticTensor:
-        return self._transition_matrix
-
-    @transition_matrix.setter
-    def transition_matrix(self, matrix):
-        self.transition_matrix.logits = matrix
-
-    @property
-    def initial_vector(self) -> StochasticTensor:
-        return self._initial_vector
-
-    @initial_vector.setter
-    def initial_vector(self, matrix):
-        self.initial_vector.logits = matrix
+        self.initial_vector, self.transition_matrix = self.sample_chain_params(self.alpha)
         
     @property
     def seed(self):
         self._seed_gen.seed
-        
-    @property
-    def _check_params(self):
-        """Check if the model parameters are set."""
-        # TODO: Exception handling
-        return self.params
 
-    @abstractproperty
+    @property
     def params(self) -> nn.ParameterDict:
         """Returns the parameters of the model."""
-        pass
+        return nn.ParameterDict({name.removeprefix('emissions.').removesuffix('.param'): param
+                                 for name, param in self.named_parameters()})
 
     @abstractproperty   
     def n_fit_params(self) -> Dict[str, int]:
@@ -91,24 +69,20 @@ class BaseHMM(nn.Module,ABC):
         """Sample the emission parameters."""
         pass
 
-    def dump_model(self, filename, **kwargs) -> List[str]:
-        """Dump model into file as python object and return the target files"""
-        return joblib.dump(self,filename,kwargs)
-
     def sample(self, size:Sequence[int]) -> torch.Tensor:
         """Sample from Markov chain, either 1D for a single sequence or 2D for multiple sample sequences given by 0 axis."""
         n_dim = len(size)
         if n_dim == 1:
-            start_sample = [1]
+            start_sample = torch.Size([1])
         elif n_dim == 2:
-            start_sample = [size[0],1]
+            start_sample = torch.Size([size[0],1])
         else:
             raise ValueError(f'Size must be at most 2-dimensional, got {n_dim}.')
         
         sampled_paths = torch.hstack((self.initial_vector.pmf.sample(start_sample), 
                                   torch.zeros(size,dtype=torch.int)))
         
-        for row,step in enumerate(self.transition_matrix.pmf.sample(size)):
+        for row,step in enumerate(self.transition_matrix.pmf.sample(torch.Size(size))):
             sampled_paths[row+1] = step[sampled_paths[row]]
 
         return sampled_paths
@@ -148,18 +122,18 @@ class BaseHMM(nn.Module,ABC):
             context_matrix = list(torch.split(adj_theta,X.lengths,1))
             return ContextualVariables(n_context, context_matrix, time_dependent) 
 
-    def train(self,
-              X:torch.Tensor,
-              tol:float=1e-2,
-              max_iter:int=20,
-              n_init:int=1,
-              post_conv_iter:int=3,
-              ignore_conv:bool=False,
-              sample_B_from_X:bool=False,
-              verbose:bool=True,
-              plot_conv:bool=False,
-              lengths:Optional[List[int]]=None,
-              theta:Optional[torch.Tensor]=None):
+    def fit(self,
+            X:torch.Tensor,
+            tol:float=1e-2,
+            max_iter:int=20,
+            n_init:int=1,
+            post_conv_iter:int=3,
+            ignore_conv:bool=False,
+            sample_B_from_X:bool=False,
+            verbose:bool=True,
+            plot_conv:bool=False,
+            lengths:Optional[List[int]]=None,
+            theta:Optional[torch.Tensor]=None):
         """Fit the model to the given sequence using the EM algorithm."""
         if sample_B_from_X:
             self.sample_B_params(X)
@@ -172,7 +146,6 @@ class BaseHMM(nn.Module,ABC):
                                        post_conv_iter=post_conv_iter,
                                        verbose=verbose)
 
-        self._check_params
         distinct_models = {}
         for rank in range(n_init):
             if rank > 0:
@@ -210,7 +183,6 @@ class BaseHMM(nn.Module,ABC):
                 lengths:Optional[List[int]] = None,
                 algorithm:Literal['map','viterbi'] = 'viterbi') -> Tuple[List[float],Sequence[torch.Tensor]]:
         """Predict the most likely sequence of hidden states. Returns log-likelihood and sequences"""
-        self._check_params
         if algorithm not in DECODERS:
             raise ValueError(f'Unknown decoder algorithm {algorithm}')
         
@@ -228,7 +200,6 @@ class BaseHMM(nn.Module,ABC):
               by_sample:bool=True,
               lengths:Optional[List[int]]=None) -> List[float]:
         """Compute the joint log-likelihood"""
-        self._check_params
         log_likelihoods = self._compute_log_likelihood(self.to_observations(X, lengths))
         res = log_likelihoods if by_sample else [sum(log_likelihoods)]
         return res
@@ -260,9 +231,9 @@ class BaseHMM(nn.Module,ABC):
             log_alpha = torch.zeros(size=(seq_len,self.n_states), 
                                     dtype=torch.float64)
             
-            log_alpha[0] = self._initial_vector.param + log_probs[0]
+            log_alpha[0] = self.initial_vector.param + log_probs[0]
             for t in range(1,seq_len):
-                log_alpha[t] = torch.logsumexp(log_alpha[t-1].reshape(-1,1) + self._transition_matrix.param, dim=0) + log_probs[t]
+                log_alpha[t] = torch.logsumexp(log_alpha[t-1].reshape(-1,1) + self.transition_matrix.param, dim=0) + log_probs[t]
 
             alpha_vec.append(log_alpha)
 
@@ -276,7 +247,7 @@ class BaseHMM(nn.Module,ABC):
                                dtype=torch.float64)
             
             for t in reversed(range(seq_len-1)):
-                log_beta[t] = torch.logsumexp(self._transition_matrix.param + log_probs[t+1] + log_beta[t+1], dim=1)
+                log_beta[t] = torch.logsumexp(self.transition_matrix.param + log_probs[t+1] + log_beta[t+1], dim=1)
             
             beta_vec.append(log_beta)
 
@@ -298,7 +269,7 @@ class BaseHMM(nn.Module,ABC):
                                  dtype=torch.float64)
             
             for t in range(seq_len-1):
-                log_xi[t] = alpha[t].reshape(-1,1) + self._transition_matrix.param + log_probs[t+1] + beta[t+1]
+                log_xi[t] = alpha[t].reshape(-1,1) + self.transition_matrix.param + log_probs[t+1] + beta[t+1]
 
             log_xi -= alpha[-1].logsumexp(dim=0)
             xi_vec.append(log_xi)
@@ -345,8 +316,8 @@ class BaseHMM(nn.Module,ABC):
         log_gamma = self._gamma(log_alpha,log_beta)
         log_xi = self._xi(X,log_alpha,log_beta)
 
-        self._initial_vector.param.data = self._accum_pi(log_gamma)
-        self._transition_matrix.param.data = self._accum_A(log_xi)
+        self.initial_vector.param.data = self._accum_pi(log_gamma)
+        self.transition_matrix.param.data = self._accum_A(log_xi)
         self._update_B_params(X.X,log_gamma,theta)
 
         return sum(self._compute_log_likelihood(X))
@@ -363,10 +334,10 @@ class BaseHMM(nn.Module,ABC):
             psi = viterbi_prob.clone()
 
             # Initialize t=1
-            viterbi_prob[:,0] = self._initial_vector.param + log_probs[0]
+            viterbi_prob[:,0] = self.initial_vector.param + log_probs[0]
             for t in range(1,seq_len):
                 trans_seq = viterbi_prob[:,t-1] + log_probs[t]
-                trans_seq = self._transition_matrix.param + trans_seq.reshape((-1, 1))
+                trans_seq = self.transition_matrix.param + trans_seq.reshape((-1, 1))
                 viterbi_prob[:,t] = torch.max(trans_seq, dim=0).values
                 psi[:,t] = torch.argmax(trans_seq, dim=0)
 

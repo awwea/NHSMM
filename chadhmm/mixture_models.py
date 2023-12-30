@@ -14,10 +14,9 @@ class GaussianMixtureModel(GaussianMixtureEmissions):
                  alpha:float = 1.0,
                  covariance_type:GaussianMixtureEmissions.COVAR_TYPES_HINT = 'full',
                  min_covar:float = 1e-3,
-                 seed:Optional[int] = None,
-                 device:Optional[torch.device] = None):
+                 seed:Optional[int] = None):
         
-        GaussianMixtureEmissions.__init__(self,n_dims,n_features,n_components,False,alpha,covariance_type,min_covar,seed,device)
+        GaussianMixtureEmissions.__init__(self,n_dims,n_features,n_components,False,alpha,covariance_type,min_covar,seed)
     
     @property
     def dof(self) -> int:
@@ -76,7 +75,6 @@ class GaussianMixtureModel(GaussianMixtureEmissions):
                                        max_iter=max_iter,
                                        n_init=n_init,
                                        post_conv_iter=post_conv_iter,
-                                       device=self.device,
                                        verbose=verbose)
 
         distinct_models = {}

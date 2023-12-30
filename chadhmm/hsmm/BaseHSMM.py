@@ -1,16 +1,17 @@
 from abc import ABC, abstractmethod, abstractproperty
-from typing import Optional, List, Tuple, Dict, Sequence , Literal, Union
+from typing import Optional, List, Tuple, Dict, Sequence , Literal
 
 import torch
+import torch.nn as nn
 import numpy as np
 
 from ..stochastic_matrix import StochasticTensor # type: ignore
-from ..utils import (Multiprocessor, FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
+from ..utils import (FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
 log_normalize, sequence_generator, 
 DECODERS, INFORM_CRITERIA) # type: ignore
 
 
-class BaseHSMM(ABC):
+class BaseHSMM(nn.Module,ABC):
     """
     Base Class for Hidden Semi-Markov Model (HSMM)
     ----------
@@ -21,54 +22,24 @@ class BaseHSMM(ABC):
                  n_states: int,
                  max_duration: int,
                  alpha: float = 1.0,
-                 seed: Optional[int] = None,
-                 device: Optional[torch.device] = None):
-
+                 seed: Optional[int] = None):
+        
+        nn.Module.__init__(self)
+        self._seed_gen = SeedGenerator(seed)
         self.n_states = n_states
         self.max_duration = max_duration
         self.alpha = alpha
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
-
-        self._seed_gen = SeedGenerator(seed)
-        self._initial_vector, self._transition_matrix, self._duration_matrix = self.sample_chain_params(self.alpha)
+        self.initial_vector, self.transition_matrix, self.duration_matrix = self.sample_chain_params(self.alpha)
 
     @property
     def seed(self):
         self._seed_gen.seed
 
     @property
-    def duration_matrix(self) -> StochasticTensor:
-        return self._duration_matrix
-
-    @duration_matrix.setter
-    def duration_matrix(self, matrix):
-        self._duration_matrix.logits = matrix
-        
-    @property
-    def transition_matrix(self) -> StochasticTensor:
-        return self._transition_matrix
-
-    @transition_matrix.setter
-    def transition_matrix(self, matrix):
-        self._transition_matrix.logits = matrix
-
-    @property
-    def initial_vector(self) -> StochasticTensor:
-        return self._initial_vector
-
-    @initial_vector.setter
-    def initial_vector(self, vector):
-        self._initial_vector.logits = vector
-        
-    @property
-    def _check_params(self):
-        """Check if the model parameters are set."""
-        return self.params
-
-    @abstractproperty
-    def params(self) -> Dict[str, torch.Tensor]:
+    def params(self) -> nn.ParameterDict:
         """Returns the parameters of the model."""
-        pass
+        return nn.ParameterDict({name.removeprefix('emissions.').removesuffix('.param'): param
+                                 for name, param in self.named_parameters()})
 
     @abstractproperty   
     def n_fit_params(self) -> Dict[str, int]:
@@ -96,15 +67,15 @@ class BaseHSMM(ABC):
         pass
 
     @abstractmethod
-    def update_B_params(self, X:List[torch.Tensor], log_gamma:List[torch.Tensor], theta:torch.Tensor):
+    def update_B_params(self, X:List[torch.Tensor], log_gamma:List[torch.Tensor], theta:Optional[ContextualVariables]):
         """Update the emission parameters."""
         pass
 
     def sample_chain_params(self, alpha:float = 1) -> Tuple[StochasticTensor, StochasticTensor, StochasticTensor]:
         """Initialize the parameters of Semi-Markov Chain."""
-        return (StochasticTensor.from_dirichlet('Initial',(self.n_states,),self.device,False,alpha), 
-                StochasticTensor.from_dirichlet('Transition',(self.n_states,self.n_states),self.device,True,alpha),
-                StochasticTensor.from_dirichlet('Duration',(self.n_states,self.max_duration),self.device,False,alpha))
+        return (StochasticTensor.from_dirichlet('Initial',(self.n_states,),False,alpha), 
+                StochasticTensor.from_dirichlet('Transition',(self.n_states,self.n_states),True,alpha),
+                StochasticTensor.from_dirichlet('Duration',(self.n_states,self.max_duration),False,alpha))
     
     def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
         """Convert a sequence of observations to an Observations object."""
@@ -148,7 +119,7 @@ class BaseHSMM(ABC):
             verbose:bool = True,
             plot_conv:bool = False,
             lengths:Optional[List[int]] = None,
-            theta:Optional[torch.Tensor] = None) -> Dict[int, FittedModel]:
+            theta:Optional[torch.Tensor] = None):
         """Fit the model to the given sequence using the EM algorithm."""
         if sample_B_from_X:
             self.sample_B_params(X)
@@ -159,14 +130,12 @@ class BaseHSMM(ABC):
                                        max_iter=max_iter,
                                        n_init=n_init,
                                        post_conv_iter=post_conv_iter,
-                                       device=self.device,
                                        verbose=verbose)
 
-        self._check_params
         distinct_models = {}
         for rank in range(n_init):
             if rank > 0:
-                self._initial_vector, self._transition_matrix, self._duration_matrix = self.sample_chain_params()
+                self.initial_vector, self.transition_matrix, self.duration_matrix = self.sample_chain_params()
             
             self.conv.push_pull(sum(self._compute_log_likelihood(X_valid)),0,rank)
             for iter in range(1,self.conv.max_iter+1):
@@ -193,7 +162,7 @@ class BaseHSMM(ABC):
         if plot_conv:
             self.conv.plot_convergence()
 
-        return distinct_models
+        return self
     
     def predict(self, 
                 X:torch.Tensor, 
@@ -207,7 +176,6 @@ class BaseHSMM(ABC):
         decoder = {'viterbi': self._viterbi,
                    'map': self._map}[algorithm]
         
-        self._check_params
         X_valid = self.to_observations(X, lengths)
         log_score = sum(self._compute_log_likelihood(X_valid))
         decoded_path = decoder(X_valid)
@@ -243,16 +211,15 @@ class BaseHSMM(ABC):
         alpha_vec = []
         for seq_len,_,log_probs in sequence_generator(X):
             log_alpha = torch.zeros(size=(seq_len,self.n_states,self.max_duration),
-                                    dtype=torch.float64,
-                                    device=self.device)
+                                    dtype=torch.float64)
             
-            log_alpha[0] = self._duration_matrix + (self._initial_vector + log_probs[0]).reshape(-1,1)
+            log_alpha[0] = self.duration_matrix.param + (self.initial_vector.param + log_probs[0]).reshape(-1,1)
             for t in range(1,seq_len):
-                trans_alpha_sum = torch.logsumexp(log_alpha[t-1,:,0].reshape(-1,1) + self._transition_matrix, dim=0) + log_probs[t]
+                trans_alpha_sum = torch.logsumexp(log_alpha[t-1,:,0].reshape(-1,1) + self.transition_matrix.param, dim=0) + log_probs[t]
 
-                log_alpha[t,:,-1] = trans_alpha_sum + self._duration_matrix[:,-1]
+                log_alpha[t,:,-1] = trans_alpha_sum + self.duration_matrix.param[:,-1]
                 log_alpha[t,:,:-1] = torch.logaddexp(log_alpha[t-1,:,1:] + log_probs[t].reshape(-1,1),
-                                                     trans_alpha_sum.reshape(-1,1) + self._duration_matrix[:,:-1])
+                                                     trans_alpha_sum.reshape(-1,1) + self.duration_matrix.param[:,:-1])
             
             alpha_vec.append(log_alpha)
         
@@ -263,13 +230,12 @@ class BaseHSMM(ABC):
         beta_vec = []
         for seq_len,_,log_probs in sequence_generator(X):
             log_beta = torch.zeros(size=(seq_len,self.n_states,self.max_duration),
-                                   dtype=torch.float64,
-                                   device=self.device)
+                                   dtype=torch.float64)
             
             for t in reversed(range(seq_len-1)):
-                beta_dur_sum = torch.logsumexp(log_beta[t+1] + self._duration_matrix, dim=1)
+                beta_dur_sum = torch.logsumexp(log_beta[t+1] + self.duration_matrix.param, dim=1)
 
-                log_beta[t,:,0] = torch.logsumexp(self._transition_matrix + log_probs[t+1] + beta_dur_sum, dim=1)
+                log_beta[t,:,0] = torch.logsumexp(self.transition_matrix.param + log_probs[t+1] + beta_dur_sum, dim=1)
                 log_beta[t,:,1:] = log_probs[t+1].reshape(-1,1) + log_beta[t+1,:,:-1]
             
             beta_vec.append(log_beta)
@@ -281,8 +247,7 @@ class BaseHSMM(ABC):
         gamma_vec = []
         for (seq_len,_,_),alpha,xi in zip(sequence_generator(X),log_alpha,log_xi):
             log_gamma = torch.zeros(size=(seq_len,self.n_states), 
-                                    dtype=torch.float64, 
-                                    device=self.device)
+                                    dtype=torch.float64)
 
             real_xi = xi.exp()
             log_gamma[-1] = alpha[-1].logsumexp(dim=1)
@@ -299,12 +264,11 @@ class BaseHSMM(ABC):
         xi_vec = []
         for (seq_len,_,log_probs),alpha,beta in zip(sequence_generator(X),log_alpha,log_beta):
             log_xi = torch.zeros(size=(seq_len-1,self.n_states,self.n_states),
-                                   dtype=torch.float64, 
-                                   device=self.device)
+                                   dtype=torch.float64)
             
             for t in range(seq_len-1):
-                beta_dur_sum = torch.logsumexp(beta[t+1] + self._duration_matrix, dim=1)
-                log_xi[t] = alpha[t,:,0].reshape(-1,1) + self._transition_matrix + log_probs[t+1] + beta_dur_sum
+                beta_dur_sum = torch.logsumexp(beta[t+1] + self.duration_matrix.param, dim=1)
+                log_xi[t] = alpha[t,:,0].reshape(-1,1) + self.transition_matrix.param + log_probs[t+1] + beta_dur_sum
 
             xi_vec.append(log_xi)
 
@@ -315,12 +279,11 @@ class BaseHSMM(ABC):
         eta_vec = []
         for (seq_len,_,log_probs),alpha,beta in zip(sequence_generator(X),log_alpha,log_beta):
             log_eta = torch.zeros(size=(seq_len-1,self.n_states,self.max_duration), 
-                                  dtype=torch.float64, 
-                                  device=self.device)
+                                  dtype=torch.float64)
             
             for t in range(seq_len-1):
-                trains_alpha_sum = torch.logsumexp(alpha[t,:,0].reshape(-1,1) + self._transition_matrix, dim=0)
-                log_eta[t] = beta[t+1] + self._duration_matrix + (log_probs[t+1] + trains_alpha_sum).reshape(-1, 1) 
+                trains_alpha_sum = torch.logsumexp(alpha[t,:,0].reshape(-1,1) + self.transition_matrix.param, dim=0)
+                log_eta[t] = beta[t+1] + self.duration_matrix.param + (log_probs[t+1] + trains_alpha_sum).reshape(-1, 1) 
 
             log_eta -= alpha[-1].logsumexp(dim=(0,1))
             eta_vec.append(log_eta)
@@ -348,8 +311,7 @@ class BaseHSMM(ABC):
     def _accum_pi(self, log_gamma:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the initial vector."""
         log_pi = torch.zeros(size=(self.n_states,),
-                             dtype=torch.float64, 
-                             device=self.device)
+                             dtype=torch.float64)
 
         for gamma in log_gamma:
             log_pi += gamma[0].exp()
@@ -359,8 +321,7 @@ class BaseHSMM(ABC):
     def _accum_A(self, log_xi:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the transition matrix."""
         log_A = torch.zeros(size=(self.n_states,self.n_states),
-                             dtype=torch.float64, 
-                             device=self.device)
+                             dtype=torch.float64)
         
         for xi in log_xi:
             log_A += xi.exp().sum(dim=0)
@@ -370,8 +331,7 @@ class BaseHSMM(ABC):
     def _accum_D(self, log_eta:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the transition matrix."""
         log_D = torch.zeros(size=(self.n_states,self.max_duration),
-                             dtype=torch.float64, 
-                             device=self.device)
+                             dtype=torch.float64)
         
         for eta in log_eta:
             log_D += eta.exp().sum(dim=0)
@@ -382,9 +342,9 @@ class BaseHSMM(ABC):
         """Compute the updated parameters for the model."""
         log_gamma, log_xi, log_eta = self._compute_posteriors(X)
 
-        self._initial_vector._logits.copy_(self._accum_pi(log_gamma))
-        self._transition_matrix._logits.copy_(self._accum_A(log_xi))
-        self._duration_matrix._logits.copy_(self._accum_D(log_eta))
+        self.initial_vector.param.data = self._accum_pi(log_gamma)
+        self.transition_matrix.param.data = self._accum_A(log_xi)
+        self.duration_matrix.param.data = self._accum_D(log_eta)
         self.update_B_params(X.X,log_gamma,theta)
 
     def _viterbi(self, X:Observations) -> Sequence[torch.Tensor]:
@@ -402,7 +362,6 @@ class BaseHSMM(ABC):
 
     def _score_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> List[float]:
         """Compute the log-likelihood for each sample sequence."""
-        self._check_params
         return self._compute_log_likelihood(self.to_observations(X, lengths))
 
     def _compute_log_likelihood(self, X:Observations) -> List[float]:

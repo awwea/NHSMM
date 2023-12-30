@@ -8,8 +8,19 @@ But seriously this package needs you to help me make it better. I'm not a profes
 If you have any suggestions, please let me know. I'm open to all ideas.
 """
 
+__all__ = ['CategoricalHMM', 
+           'CategoricalHSMM', 
+           'GaussianHMM',
+           'GaussianHSMM',
+           'PoissonHMM',
+           'PoissonHSMM',
+           'GaussianMixtureHMM',
+           'GaussianMixtureHSMM',
+           'StochasticTensor',
+           'GaussianMixtureModel']
+
 # Import HMM objects
-from .hmm import CategoricalHMM, GaussianHMM, GaussianMixtureHMM
-from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM
+from .hmm import CategoricalHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
+from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM
 from .mixture_models import GaussianMixtureModel
 from .stochastic_matrix import StochasticTensor

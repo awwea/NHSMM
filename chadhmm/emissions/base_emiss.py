@@ -1,15 +1,17 @@
 import torch
+import torch.nn as nn
 from abc import abstractmethod, abstractproperty, ABC
 from typing import Optional, List
 from ..utils import ContextualVariables
 
 
-class BaseEmission(ABC):
+class BaseEmission(nn.Module,ABC):
 
     def __init__(self,
                  n_dims: int,
                  n_features: int):
-
+        
+        super().__init__()
         self.n_dims = n_dims
         self.n_features = n_features
         

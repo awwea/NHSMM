@@ -1,14 +1,13 @@
 import torch
-import torch.nn as nn
 from torch.distributions import Categorical # type: ignore
 from typing import Optional, List
 
 from .base_emiss import BaseEmission # type: ignore
-from ..stochastic_matrix import StochasticTensor, MAT_OPS # type: ignore
+from ..stochastic_matrix import StochasticTensor # type: ignore
 from ..utils import ContextualVariables, log_normalize # type: ignore
 
 
-class CategoricalEmissions(nn.Module,BaseEmission):
+class CategoricalEmissions(BaseEmission):
     """
     Categorical emission distribution for HMMs.
 
@@ -29,22 +28,13 @@ class CategoricalEmissions(nn.Module,BaseEmission):
                  n_features:int,
                  alpha:float = 1.0):
         
-        super().__init__()
         BaseEmission.__init__(self,n_dims,n_features)
         self.alpha = alpha
-        self._emission_matrix = self.sample_emission_params()
+        self.emission_matrix = self.sample_emission_params()
 
     @property
     def pdf(self) -> Categorical:
         return self.emission_matrix.pmf
-
-    @property
-    def emission_matrix(self) -> StochasticTensor:
-        return self._emission_matrix
-    
-    @emission_matrix.setter
-    def emission_matrix(self, matrix):
-        self.emission_matrix.logits = matrix
 
     def sample_emission_params(self,X=None) -> StochasticTensor:
         if X is not None:
@@ -61,7 +51,7 @@ class CategoricalEmissions(nn.Module,BaseEmission):
         return self.pdf.log_prob(batch_shaped)
 
     def update_emission_params(self,X,posterior,theta=None):
-        self._emission_matrix.param.data = self._compute_emprobs(X,posterior,theta)
+        self.emission_matrix.param.data = self._compute_emprobs(X,posterior,theta)
 
     def _compute_emprobs(self,
                         X:List[torch.Tensor],

@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from typing import Optional, Literal
 
 from .BaseHMM import BaseHMM # type: ignore
@@ -57,15 +56,6 @@ class GaussianHMM(BaseHMM):
                 'tied': self.emissions.n_features * (self.emissions.n_features + 1) // 2,
             }[self.emissions.covariance_type],
         }
-    
-    @property
-    def params(self):
-        return nn.ParameterDict({
-            'pi': self.initial_vector.param,
-            'A': self.transition_matrix.param,
-            'means': self.means, 
-            'covars': self.covs
-        })
 
     @property
     def dof(self):
@@ -82,7 +72,7 @@ class GaussianHMM(BaseHMM):
         return self.emissions.map_emission(x)
 
     def sample_B_params(self,X,seed=None):
-        self.means, self.covs = self.emissions.sample_emission_params(X,seed)
+        self.means, self.covs = self.emissions.sample_emission_params(X)
 
 
 class GaussianMixtureHMM(BaseHMM):
@@ -123,7 +113,7 @@ class GaussianMixtureHMM(BaseHMM):
                  seed: Optional[int] = None):
 
         BaseHMM.__init__(self,n_states,alpha,seed)
-        self.emissions = GaussianMixtureEmissions(n_states,n_features,n_components,k_means,alpha,covariance_type, min_covar,seed)
+        self.emissions = GaussianMixtureEmissions(n_states,n_features,n_components,k_means,alpha,covariance_type,min_covar,seed)
 
     @property
     def n_fit_params(self):
@@ -142,14 +132,6 @@ class GaussianMixtureHMM(BaseHMM):
         }
 
         return fit_params_dict
-    
-    @property
-    def params(self):
-        return {'pi': self.initial_vector.logits,
-                'A': self.transition_matrix.logits,
-                'weights': self.emissions.weights.logits,
-                'means': self.emissions.means, 
-                'covars': self.emissions.covs}
 
     @property
     def dof(self):
@@ -170,4 +152,4 @@ class GaussianMixtureHMM(BaseHMM):
         return self.emissions.map_emission(x)
 
     def sample_B_params(self,X,seed=None):
-        self._means, self._covs = self.emissions.sample_emission_params(X,seed)
+        self._means, self._covs = self.emissions.sample_emission_params(X)

@@ -8,7 +8,7 @@ from .base_emiss import BaseEmission # type: ignore
 from ..utils import ContextualVariables, validate_covars, fill_covars # type: ignore
 
 
-class GaussianEmissions(nn.Module,BaseEmission):
+class GaussianEmissions(BaseEmission):
     """
     Gaussian Distribution for HMM emissions.    
     
@@ -37,38 +37,21 @@ class GaussianEmissions(nn.Module,BaseEmission):
                  n_features: int,
                  k_means: bool = False,
                  covariance_type: COVAR_TYPES_HINT = 'full',
-                 min_covar: float = 1e-3):
+                 min_covar: float = 1e-3):        
         
-        super().__init__()
         BaseEmission.__init__(self,n_dims,n_features)
         self.min_covar = min_covar
         self.covariance_type = covariance_type
         self.k_means = k_means
-        self._means, self._covs = self.sample_emission_params()
-
-    @property
-    def means(self) -> nn.Parameter:
-        return self._means
-    
-    @means.setter
-    def means(self, means:torch.Tensor):
-        target_size = (self.n_dims, self.n_features)
-        assert means.shape == target_size, ValueError(f'Means shape must be {target_size}, got {means.shape}')
-        self._means.data = means
-
-    @property
-    def covs(self) -> nn.Parameter:
-        return self._covs
-
-    @covs.setter
-    def covs(self, new_covars:torch.Tensor):
-        """Setter function for the covariance matrices."""
-        valid_covars = validate_covars(new_covars, self.covariance_type, self.n_dims, self.n_features)
-        self._covs.data = fill_covars(valid_covars, self.covariance_type, self.n_dims, self.n_features)
+        
+        # HMM object is not sharing these params inside named_parameters under emissions obj
+        sampled_params = self.sample_emission_params()
+        self.means:nn.Parameter = sampled_params.get('means')
+        self.covs:nn.Parameter = sampled_params.get('covs')
 
     @property
     def pdf(self) -> MultivariateNormal:
-        return MultivariateNormal(self.means.data,self.covs.data)
+        return MultivariateNormal(self.means,self.covs)
     
     def map_emission(self,x):
         b_size = (-1,self.n_dims,-1) if x.ndim == 2 else (self.n_dims,-1)
@@ -86,11 +69,11 @@ class GaussianEmissions(nn.Module,BaseEmission):
             covs = self.min_covar + torch.eye(n=self.n_features, 
                                               dtype=torch.float64).expand((self.n_dims, self.n_features, self.n_features)).clone()
 
-        return nn.Parameter(means), nn.Parameter(covs)
+        return nn.ParameterDict({'means':means,'covs':covs})
     
     def update_emission_params(self,X,posterior,theta=None):
-        self._means.data = self._compute_means(X,posterior,theta)
-        self._covs.data = self._compute_covs(X,posterior,theta)
+        self.means.data = self._compute_means(X,posterior,theta)
+        self.covs.data = self._compute_covs(X,posterior,theta)
     
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
         """Sample cluster means from K Means algorithm"""

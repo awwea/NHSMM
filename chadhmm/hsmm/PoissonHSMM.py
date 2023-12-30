@@ -1,15 +1,15 @@
 from typing import Optional
 import torch
 
-from .BaseHMM import BaseHMM # type: ignore
-from ..emissions import CategoricalEmissions # type: ignore
+from .BaseHSMM import BaseHSMM # type: ignore
+from ..emissions import PoissonEmissions # type: ignore
 
 
-class CategoricalHMM(BaseHMM):
+class PoissonHMM(BaseHSMM):
     """
-    Categorical Hidden Markov Model (HMM)
+    Poisson Hidden Semi-Markov Model (HSMM)
     ----------
-    Hidden Markov model with categorical (discrete) emissions. This model is a special case of the HSMM model with a geometric duration distribution.
+    Hidden Markov model with emissions. This model is a special case of the HSMM model with a geometric duration distribution.
 
     Parameters:
     ----------
@@ -21,25 +21,24 @@ class CategoricalHMM(BaseHMM):
         Dirichlet concentration parameter for the prior over initial distribution, transition amd emission probabilities.
     seed (int):
         Random seed for reproducibility.
-    device (torch.device):
-        Device on which to fit the model.
     """
 
     def __init__(self,
-                 n_states:int,
-                 n_features:int,
-                 alpha:float = 1.0,
-                 seed:Optional[int] = None):
+                 n_states: int,
+                 n_features: int,
+                 max_duration:int,
+                 alpha: float = 1.0,
+                 seed: Optional[int] = None):
         
-        BaseHMM.__init__(self,n_states,alpha,seed)
-        self.emissions = CategoricalEmissions(n_states,n_features,alpha)
+        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed)
+        self.emissions = PoissonEmissions(n_states,n_features)
 
     @property
     def n_fit_params(self):
         return {
             'initial_states': self.n_states,
             'transitions': self.n_states**2,
-            'emissions': self.n_states * self.emissions.n_features    
+            'rates': self.n_states * self.emissions.n_features   
         }
 
     @property
@@ -57,6 +56,4 @@ class CategoricalHMM(BaseHMM):
         return self.emissions.map_emission(x)
 
     def sample_B_params(self,X=None):
-        self._emission_matrix = self.emissions.sample_emission_params(X)
-
-
+        self._lambdas = self.emissions.sample_emission_params(X)

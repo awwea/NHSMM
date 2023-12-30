@@ -1,12 +1,8 @@
 import torch
 import torch.nn as nn
-import numpy as np
 from torch.distributions import Categorical
-from typing import Union, TypeVar, Tuple, Literal
-from .utils import sample_logits, validate_logits, MAT_TYPES # type: ignore
-
-torch.set_printoptions(precision=4, profile="full")
-MAT_OPS = TypeVar('MAT_OPS', bound=Union['StochasticTensor', np.ndarray, torch.Tensor])
+from typing import Union, Tuple, Literal
+from .utils import sample_logits, validate_logits # type: ignore
 
 
 class StochasticTensor(nn.Module):
@@ -43,25 +39,17 @@ class StochasticTensor(nn.Module):
         return self.param.data
 
     @logits.setter
-    def logits(self, log_probs:MAT_OPS):
-        if isinstance(log_probs, StochasticTensor):
-            log_tensor = log_probs.logits
-        elif isinstance(log_probs, torch.Tensor):
-            log_tensor = log_probs
-        elif isinstance(log_probs, np.ndarray):
-            log_tensor = torch.from_numpy(log_probs) 
-        else:
-            raise NotImplementedError(f'Matrix type not supported, got {type(log_probs)}')
-
-        self.param = nn.Parameter(validate_logits(log_tensor,self.name),requires_grad=False)
+    def logits(self, log_probs:torch.Tensor):
+        self.param = nn.Parameter(validate_logits(log_probs,self.name),requires_grad=False)
+        self.register_parameter(self.name, self.param)
 
     @property
     def pmf(self) -> Categorical:
-        return Categorical(logits=self.logits)
+        return Categorical(logits=self.param)
     
     @property
     def shape(self) -> torch.Size:
-        return self.pmf.param_shape
+        return self.param.shape
     
     @property
     def probs(self) -> torch.Tensor:

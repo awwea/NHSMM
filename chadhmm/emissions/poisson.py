@@ -1,5 +1,6 @@
 from typing import Optional, List
 import torch
+import torch.nn as nn
 from torch.distributions import Poisson, Independent
 from .base_emiss import BaseEmission
 from ..utils import ContextualVariables
@@ -15,28 +16,14 @@ class PoissonEmissions(BaseEmission):
         Number of mixtures in the model. This is equal to the number of hidden states in the HMM.
     n_features (int):
         Number of features in the data. For m > 1 we assume emissions follow joint distribution composed of univariate marginals.
-    device (torch.device):
-        Device to use for computations.
     """
 
     def __init__(self, 
                  n_dims:int,
-                 n_features:int,
-                 device:Optional[torch.device] = None):
+                 n_features:int):
         
-        BaseEmission.__init__(self,n_dims,n_features,device)
-
-        self._lambdas = self.sample_emission_params()
-
-    @property
-    def lambdas(self) -> torch.Tensor:
-        return self._lambdas
-    
-    @lambdas.setter
-    def lambdas(self, lambdas: torch.Tensor):
-        target_size = (self.n_dims, self.n_features)
-        assert lambdas.shape == target_size, ValueError(f'lambdas shape must be {target_size}, got {lambdas.shape}')
-        self._lambdas = lambdas.to(self.device)
+        BaseEmission.__init__(self,n_dims,n_features)
+        self.lambdas:nn.Parameter = self.sample_emission_params().get('rates')
 
     @property
     def pdf(self) -> Independent:
@@ -49,16 +36,15 @@ class PoissonEmissions(BaseEmission):
     
     def sample_emission_params(self,X=None):
         if X is not None:
-            means = X.mean(dim=0).expand(self.n_dims,-1).clone()
+            rates = X.mean(dim=0).expand(self.n_dims,-1).clone()
         else:
-            means = torch.ones(size=(self.n_dims, self.n_features), 
-                                dtype=torch.float64, 
-                                device=self.device) 
+            rates = torch.ones(size=(self.n_dims, self.n_features), 
+                                dtype=torch.float64) 
 
-        return means
+        return nn.ParameterDict({'rates':nn.Parameter(rates,requires_grad=False)})
     
     def update_emission_params(self,X,posterior,theta=None):
-        self._lambdas.copy_(self._compute_rates(X,posterior,theta))
+        self.lambdas.data = self._compute_rates(X,posterior,theta)
 
     def _compute_rates(self,
                        X:List[torch.Tensor],
@@ -66,19 +52,17 @@ class PoissonEmissions(BaseEmission):
                        theta:Optional[ContextualVariables]) -> torch.Tensor:
         """Compute the means for each hidden state"""
         new_rates = torch.zeros(size=(self.n_dims, self.n_features), 
-                               dtype=torch.float64, 
-                               device=self.device)
+                               dtype=torch.float64)
         
         denom = torch.zeros(size=(self.n_dims,1), 
-                            dtype=torch.float64, 
-                            device=self.device)
+                            dtype=torch.float64)
         
         for seq,gamma_val in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent 
                 raise NotImplementedError('Contextualized emissions not implemented for GaussianEmissions')
             else:
-                new_rates += gamma_val.T @ seq
+                new_rates += gamma_val.T @ seq.double()
                 denom += gamma_val.T.sum(dim=-1,keepdim=True)
 
         return new_rates / denom
