@@ -1,13 +1,12 @@
-from typing import Optional,Sequence,List, Dict, Tuple, Literal
+from typing import Optional, Sequence, List, Tuple, Literal
 from abc import ABC, abstractmethod, abstractproperty
 
 import torch
 import torch.nn as nn
 import numpy as np
 
-from ..stochastic_matrix import StochasticTensor # type: ignore
-from ..utils import (FittedModel, ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
-log_normalize, sequence_generator, 
+from ..utils import (ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
+log_normalize, sequence_generator, sample_logits,
 DECODERS, INFORM_CRITERIA) # type: ignore
 
 
@@ -20,32 +19,28 @@ class BaseHMM(nn.Module,ABC):
 
     def __init__(self,
                  n_states:int,
+                 n_features:int,
                  alpha:float = 1.0,
                  seed:Optional[int] = None):
 
         nn.Module.__init__(self)
         self.n_states = n_states
+        self.n_features = n_features
         self.alpha = alpha
         self._seed_gen = SeedGenerator(seed)
-        self.params = self.sample_chain_params(self.alpha)
+        self.params = self.sample_model_params(self.alpha)
         
     @property
     def seed(self):
         self._seed_gen.seed
+
+    @abstractproperty
+    def pdf(self):
+        pass
     
     @abstractproperty
-    def dof(self) -> int:
+    def dof(self):
         """Returns the degrees of freedom of the model."""
-        pass
-
-    @abstractmethod
-    def _update_B_params(self, X:List[torch.Tensor], log_gamma:List[torch.Tensor], theta:Optional[ContextualVariables]):
-        """Update the emission parameters."""
-        pass
-
-    @abstractmethod
-    def check_sequence(self, X:torch.Tensor) -> torch.Tensor:
-        """Get emission probabilities for a given sequence of observations."""
         pass
 
     @abstractmethod
@@ -54,7 +49,15 @@ class BaseHMM(nn.Module,ABC):
         pass
 
     @abstractmethod
-    def sample_B_params(self, X:Optional[torch.Tensor]=None):
+    def estimate_emission_params(self, 
+                                 X:List[torch.Tensor], 
+                                 posterior:List[torch.Tensor], 
+                                 theta:Optional[ContextualVariables]) -> nn.ParameterDict:
+        """Update the emission parameters."""
+        pass
+
+    @abstractmethod
+    def sample_emission_params(self, X:Optional[torch.Tensor]=None) -> nn.ParameterDict:
         """Sample the emission parameters."""
         pass
 
@@ -76,19 +79,33 @@ class BaseHMM(nn.Module,ABC):
 
         return sampled_paths
         
-    def sample_chain_params(self, alpha:float = 1.0) -> nn.ParameterDict:
+    def sample_model_params(self, alpha:float = 1.0, X:Optional[torch.Tensor]=None) -> nn.ParameterDict:
         """Initialize the model parameters."""
-        initial_vector = StochasticTensor.from_dirichlet('Initial',(self.n_states,),False,alpha)
-        transition_matrix = StochasticTensor.from_dirichlet('Transition',(self.n_states,self.n_states),False,alpha)
-
-        return nn.ParameterDict({
-            'pi':nn.Parameter(initial_vector.logits, requires_grad=False),
-            'A':nn.Parameter(transition_matrix.logits, requires_grad=False)
+        initial_vector = sample_logits(alpha,(self.n_states,),False)
+        transition_matrix = sample_logits(alpha,(self.n_states,self.n_states),False)
+        model_params = nn.ParameterDict({
+            'pi':nn.Parameter(initial_vector,requires_grad=False),
+            'A':nn.Parameter(transition_matrix,requires_grad=False)
         })
+        model_params.update(self.sample_emission_params(X))
+
+        return model_params
+    
+    # TODO: torch.distributions.Distribution method _validate_sample does this but just on single batch
+    def check_constraints(self,
+                          value:torch.Tensor) -> torch.Tensor:
+        not_supported = value[torch.logical_not(self.pdf.support.check(value))].unique()
+        events = self.pdf.event_shape
+        event_dims = len(events)
+        assert len(not_supported) == 0, ValueError(f'Values outside PDF support, got values: {not_supported.tolist()}')
+        assert value.ndim == event_dims+1, ValueError(f'Expected number of dims differs from PDF constraints on event shape {events}')
+        if event_dims > 0:
+            assert value.shape[1:] == events, ValueError(f'PDF event shape differs, expected {events} but got {value.shape[1:]}')
+        return value
 
     def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
         """Convert a sequence of observations to an Observations object."""
-        X_valid = self.check_sequence(X)
+        X_valid = self.check_constraints(X)
         n_samples = X_valid.shape[0]
         seq_lenghts = [n_samples] if lengths is None else lengths
         X_vec = list(torch.split(X_valid, seq_lenghts))
@@ -130,7 +147,7 @@ class BaseHMM(nn.Module,ABC):
             theta:Optional[torch.Tensor]=None):
         """Fit the model to the given sequence using the EM algorithm."""
         if sample_B_from_X:
-            self.sample_B_params(X)
+            self.sample_emission_params(X)
         X_valid = self.to_observations(X,lengths)
         valid_theta = self.to_contextuals(theta,X_valid) if theta is not None else None
 
@@ -142,7 +159,7 @@ class BaseHMM(nn.Module,ABC):
 
         for rank in range(n_init):
             if rank > 0:
-                self._initial_vector, self._transition_matrix = self.sample_chain_params(self.alpha)
+                self.params.update(self.sample_model_params(self.alpha,X))
             
             self.conv.push_pull(sum(self._compute_log_likelihood(X_valid)),0,rank)
             for iter in range(1,self.conv.max_iter+1):
@@ -260,15 +277,11 @@ class BaseHMM(nn.Module,ABC):
             xi_vec.append(log_xi)
 
         return xi_vec
-    
-    def _compute_fwd_bwd(self, X:Observations) -> Tuple[List[torch.Tensor],List[torch.Tensor]]:
+
+    def _compute_posteriors(self, X:Observations) -> Tuple[List[torch.Tensor],...]:
+        """Execute the forward-backward algorithm and compute the log-Gamma and log-Xi variables."""
         log_alpha = self._forward(X)
         log_beta = self._backward(X)
-        return log_alpha, log_beta
-
-    def _compute_posteriors(self, X:Observations) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        """Execute the forward-backward algorithm and compute the log-Gamma and log-Xi variables."""
-        log_alpha, log_beta = self._compute_fwd_bwd(X)
         log_gamma = self._gamma(log_alpha,log_beta)
         log_xi = self._xi(X,log_alpha,log_beta)
         return log_gamma, log_xi
@@ -295,18 +308,15 @@ class BaseHMM(nn.Module,ABC):
     
     def _update_model(self, X:Observations, theta:Optional[ContextualVariables]) -> float:
         """Compute the updated parameters for the model."""
-        log_alpha = self._forward(X)
-        log_beta = self._backward(X)
+        log_gamma,log_xi = self._compute_posteriors(X)
+        gamma = [torch.exp(gamma) for gamma in log_gamma]
 
-        log_gamma = self._gamma(log_alpha,log_beta)
-        log_xi = self._xi(X,log_alpha,log_beta)
-
-        self.params.update({
-            'pi':self._accum_pi(log_gamma),
-            'A':self._accum_A(log_xi)
+        new_params = nn.ParameterDict({
+            'pi':nn.Parameter(self._accum_pi(log_gamma),requires_grad=False),
+            'A':nn.Parameter(self._accum_A(log_xi),requires_grad=False)
         })
-
-        self._update_B_params(X.X,log_gamma,theta)
+        new_params.update(self.estimate_emission_params(X.X,gamma,theta))
+        self.params.update(new_params)
 
         return sum(self._compute_log_likelihood(X))
     

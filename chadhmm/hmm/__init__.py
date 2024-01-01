@@ -1,3 +1,4 @@
 from .CategoricalHMM import CategoricalHMM
-from .GaussianHMM import GaussianHMM, GaussianMixtureHMM
 from .PoissonHMM import PoissonHMM
+from .GaussianHMM import GaussianHMM
+from .GaussianMixtureHMM import GaussianMixtureHMM

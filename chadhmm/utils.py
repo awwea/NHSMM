@@ -1,27 +1,13 @@
-from typing import Generator, Tuple, Optional, List, Generator, Dict, Callable, Union
+from typing import Generator, Tuple, Optional, List, Generator, Union
 from dataclasses import dataclass, field
 
 import torch
-import torch.nn as nn
-from torch.multiprocessing import Process, Queue
 import matplotlib.pyplot as plt # type: ignore
-from prettytable import PrettyTable # type: ignore
 
 MAT_TYPES = frozenset(('Transition','Emission','Duration','Weights','Matrix','Tensor','Initial','Vector'))
 DECODERS = frozenset(('viterbi', 'map'))
 INFORM_CRITERIA = frozenset(('AIC', 'BIC', 'HQC'))
 
-
-@dataclass
-class FittedModel:
-    """Dataclass for a fitted model"""
-    model: str
-    n_fit_params: Dict[str,int]
-    DOF: int
-    converged: bool
-    log_likelihood: float
-    AIC: float
-    params: nn.ParameterDict
 
 @dataclass
 class Observations:
@@ -164,17 +150,6 @@ class ConvergenceHandler:
         ax.legend(loc='lower right')
         plt.show()
 
-
-def laplace_smoothing(log_matrix: torch.Tensor, k: float) -> torch.Tensor:
-    """Laplace smoothing of a log probability matrix"""
-
-    if k <= 0.0:  
-        return log_matrix
-    else:
-        real_matrix = torch.exp(log_matrix) 
-        smoothed_log_matrix = torch.log((real_matrix + k) / (1 + k * real_matrix.shape[-1]))
-        return smoothed_log_matrix
-
 def validate_logits(matrix:torch.Tensor, name:str) -> torch.Tensor:    
 
     if torch.any(torch.isnan(matrix)):
@@ -213,11 +188,11 @@ def sample_logits(prior: float, target_size: Union[Tuple[int,...],torch.Size], s
 
     return probs.log()
 
-def log_normalize(matrix: torch.Tensor, dim:int=0) -> torch.Tensor:
+def log_normalize(matrix:torch.Tensor, dim:int=0) -> torch.Tensor:
     """Normalize a posterior probability matrix"""
     return matrix - matrix.logsumexp(dim,True)
 
-def sequence_generator(X: Observations) -> Generator[Tuple[int,torch.Tensor,torch.Tensor], None, None]:
+def sequence_generator(X:Observations) -> Generator[Tuple[int,torch.Tensor,torch.Tensor], None, None]:
     for X_len,seq,log_probs in zip(X.lengths,X.X,X.log_probs):
         yield X_len, seq, log_probs       
     
@@ -313,20 +288,4 @@ def fill_covars(covars: torch.Tensor,
         return eye * covars.unsqueeze(-1).unsqueeze(-1)
     else:
         raise NotImplementedError(f"This covariance type is not implemented: {covariance_type}")
-
-def print_table(rows: list, header: list, title: str):
-    """
-    Helper method for the pretty print function. It prints the parameters
-    as a nice table.
-    """
-    t = PrettyTable(title=title, 
-                    field_names=header, 
-                    header_style='upper',
-                    padding_width=1, 
-                    title_style='upper')
-    
-    for row in rows:
-        t.add_row(row)
-    
-    print(t)
 

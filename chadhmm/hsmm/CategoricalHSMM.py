@@ -1,8 +1,10 @@
-from typing import Optional
+from typing import Optional, List
 import torch
+import torch.nn as nn
+from torch.distributions import Categorical
 
 from .BaseHSMM import BaseHSMM # type: ignore
-from ..emissions import CategoricalEmissions # type: ignore
+from ..utils import ContextualVariables, log_normalize, sample_logits
 
 
 class CategoricalHSMM(BaseHSMM):
@@ -36,34 +38,53 @@ class CategoricalHSMM(BaseHSMM):
                  alpha:float = 1.0,
                  seed:Optional[int] = None):
         
-        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed)
-        self.emissions = CategoricalEmissions(n_states,n_features,alpha)
+        BaseHSMM.__init__(self,n_states,n_features,max_duration,alpha,seed)
 
-    @property    
-    def n_fit_params(self):
-        """Return the number of trainable model parameters."""
-        return {
-            'states': self.n_states,
-            'transitions': self.n_states**2,
-            'durations': self.n_states * self.max_duration,
-            'emissions': self.n_states * self.emissions.n_features
-        }
-    
     @property
     def dof(self):
-        """Returns the degrees of freedom of the model."""
-        return self.n_states ** 2 + self.n_states * self.emissions.n_features - 1
-    
-    def check_sequence(self,X):
-        return self.emissions.check_constraints(X)
-        
+        return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1
+
     def map_emission(self,x):
-        return self.emissions.map_emission(x)
+        batch_shaped = x.repeat(self.n_states,1).T
+        return self.pdf.log_prob(batch_shaped)
+    
+    @property
+    def pdf(self) -> Categorical:
+        return Categorical(logits=self.params.B)
 
-    def sample_B_params(self,X,seed=None):
-        self._emission_matrix = self.emissions.sample_emission_params(X)
+    def estimate_emission_params(self,X,posterior,theta=None):
+        return nn.ParameterDict({
+            'B':nn.Parameter(self._compute_emprobs(X,posterior,theta),requires_grad=False)
+        })
 
-    def update_B_params(self,X,log_gamma,theta):
-        gamma = [torch.exp(gamma) for gamma in log_gamma]
-        self.emissions.update_emission_params(X,gamma,theta)
+    def sample_emission_params(self,X=None):
+        if X is not None:
+            emission_freqs = torch.bincount(X) / X.shape[0]
+            emission_matrix = torch.log(emission_freqs.expand(self.n_states,-1))
+        else:
+            emission_matrix = sample_logits(self.alpha,(self.n_states,self.n_features),False)
+            
+        return nn.ParameterDict({
+            'B':nn.Parameter(emission_matrix,requires_grad=False)
+        })
+
+    def _compute_emprobs(self,
+                        X:List[torch.Tensor],
+                        posterior:List[torch.Tensor],
+                        theta:Optional[ContextualVariables]=None) -> torch.Tensor: 
+        """Compute the emission probabilities for each hidden state."""
+        emission_mat = torch.zeros(size=(self.n_states,self.n_features),
+                                   dtype=torch.float64)
+
+        for seq,gamma_val in zip(X,posterior):
+            if theta is not None:
+                #TODO: Implement contextualized emissions
+                raise NotImplementedError('Contextualized emissions not implemented for CategoricalEmissions')
+            else:
+                masks = seq.view(1,-1) == self.pdf.enumerate_support(expand=False)
+                for i,mask in enumerate(masks):
+                    masked_gamma = gamma_val[mask]
+                    emission_mat[:,i] += masked_gamma.sum(dim=0)
+
+        return log_normalize(emission_mat.log(),1)
 

@@ -15,12 +15,8 @@ __all__ = ['CategoricalHMM',
            'PoissonHMM',
            'PoissonHSMM',
            'GaussianMixtureHMM',
-           'GaussianMixtureHSMM',
-           'StochasticTensor',
-           'GaussianMixtureModel']
+           'GaussianMixtureHSMM']
 
 # Import HMM objects
 from .hmm import CategoricalHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
 from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM
-from .mixture_models import GaussianMixtureModel
-from .stochastic_matrix import StochasticTensor

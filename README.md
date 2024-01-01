@@ -50,19 +50,19 @@ Please refer to the [docs](https://github.com/GarroshIcecream/ChadHMM//tree/mast
 - [ ] Hidden Semi Markov Model numerical instability
     - [ ] Fix computation of posteriors 
     - [x] Fix mean and covariance update in HSMM
+- [ ] Implementation of Viterbi algorithm for HSMM
 - [X] K-Means for Gaussian means initialization
-- [ ] Improve the documentation with examples
+- [ ] Improve the docs with examples
     - [ ] Application on financial time series prediction
 - [ ] Code base refactor, abstractions might be confusing
-- [ ] Integration of contextual model for continous distributions
+- [ ] Integration of contextual models
   - [ ] Time dependent context to be implemented
   - [ ] Contextual Variables for covariances using GEM (Genereliazed Expectation Maximization algo)
-- [ ] Contextual variables for Categorical emissions
-- [ ] Support for wider range of emissions distributions
+  - [ ] Contextual variables for Categorical emissions
+- [x] Support for wider range of emissions distributions
 - [ ] More visual tools for model interpretations
 - [ ] Performance improvements
-    - [ ] JIT or else
-    - [ ] Improved Tensor ops
+    - [ ] TorchDynamo?
     - [ ] CUDA optimizations
 
 See the [open issues](https://github.com/GarroshIcecream/ChadHMM/issues) for a full list of proposed features (and known issues).

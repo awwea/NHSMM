@@ -1,11 +1,12 @@
-from typing import Optional
+from typing import Optional, List
 import torch
+import torch.nn as nn
+from torch.distributions import Poisson, Independent
 
 from .BaseHSMM import BaseHSMM # type: ignore
-from ..emissions import PoissonEmissions # type: ignore
+from ..utils import ContextualVariables
 
-
-class PoissonHMM(BaseHSMM):
+class PoissonHSMM(BaseHSMM):
     """
     Poisson Hidden Semi-Markov Model (HSMM)
     ----------
@@ -30,30 +31,54 @@ class PoissonHMM(BaseHSMM):
                  alpha: float = 1.0,
                  seed: Optional[int] = None):
         
-        BaseHSMM.__init__(self,n_states,max_duration,alpha,seed)
-        self.emissions = PoissonEmissions(n_states,n_features)
-
-    @property
-    def n_fit_params(self):
-        return {
-            'initial_states': self.n_states,
-            'transitions': self.n_states**2,
-            'rates': self.n_states * self.emissions.n_features   
-        }
+        BaseHSMM.__init__(self,n_states,n_features,max_duration,alpha,seed)
 
     @property
     def dof(self):
-        return self.n_states ** 2 + self.n_states * self.emissions.n_features - self.n_states - 1
-
-    def _update_B_params(self,X,log_gamma,theta):
-        gamma = [torch.exp(gamma) for gamma in log_gamma]
-        self.emissions.update_emission_params(X,gamma,theta)
-
-    def check_sequence(self,X):
-        return self.emissions.check_constraints(X)
-
+        return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1 + self.params.rates.numel()
+    
+    @property
+    def pdf(self) -> Independent:
+        return Independent(Poisson(self.params.rates),1)
+    
     def map_emission(self,x):
-        return self.emissions.map_emission(x)
+        b_size = (-1,self.n_states,-1) if x.ndim == 2 else (self.n_states,-1)
+        x_batched = x.unsqueeze(-2).expand(b_size)
+        return self.pdf.log_prob(x_batched)
 
-    def sample_B_params(self,X=None):
-        self._lambdas = self.emissions.sample_emission_params(X)
+    def sample_emission_params(self,X=None):
+        if X is not None:
+            rates = X.mean(dim=0).expand(self.n_states,-1).clone()
+        else:
+            rates = torch.ones(size=(self.n_states, self.n_features), 
+                               dtype=torch.float64)
+
+        return nn.ParameterDict({
+            'rates':nn.Parameter(rates,requires_grad=False)
+        })
+
+    def estimate_emission_params(self,X,posterior,theta):
+        return nn.ParameterDict({
+            'rates':nn.Parameter(self._compute_rates(X,posterior,theta),requires_grad=False)
+        })
+
+    def _compute_rates(self,
+                       X:List[torch.Tensor],
+                       posterior:List[torch.Tensor],
+                       theta:Optional[ContextualVariables]) -> torch.Tensor:
+        """Compute the rates for each hidden state"""
+        new_rates = torch.zeros(size=(self.n_states, self.n_features), 
+                               dtype=torch.float64)
+        
+        denom = torch.zeros(size=(self.n_states,1), 
+                            dtype=torch.float64)
+        
+        for seq,gamma_val in zip(X,posterior):
+            if theta is not None:
+                # TODO: matmul shapes are inconsistent 
+                raise NotImplementedError('Contextualized emissions not implemented for PoissonHMM')
+            else:
+                new_rates += gamma_val.T @ seq.double()
+                denom += gamma_val.T.sum(dim=-1,keepdim=True)
+
+        return new_rates / denom

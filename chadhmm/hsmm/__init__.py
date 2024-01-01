@@ -1,2 +1,4 @@
 from .CategoricalHSMM import CategoricalHSMM
-from .GaussianHSMM import GaussianHSMM, GaussianMixtureHSMM
+from .PoissonHSMM import PoissonHSMM
+from .GaussianHSMM import GaussianHSMM
+from .GaussianMixtureHMM import GaussianMixtureHSMM
