@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from torch.distributions import Categorical # type: ignore
 from typing import Optional, List
 
@@ -19,8 +20,6 @@ class CategoricalEmissions(BaseEmission):
         Number of emissions in the model.
     alpha (float):
         Dirichlet concentration parameter for the prior over emission probabilities.
-    device (torch.device):
-        Device on which to fit the model.
     """
 
     def __init__(self,
@@ -30,28 +29,31 @@ class CategoricalEmissions(BaseEmission):
         
         BaseEmission.__init__(self,n_dims,n_features)
         self.alpha = alpha
-        self.emission_matrix = self.sample_emission_params()
+        self.params = self.sample_emission_params()
 
     @property
     def pdf(self) -> Categorical:
-        return self.emission_matrix.pmf
+        return Categorical(logits=self.params.B)
 
-    def sample_emission_params(self,X=None) -> StochasticTensor:
+    def sample_emission_params(self,X=None) -> nn.ParameterDict:
         if X is not None:
             emission_freqs = torch.bincount(X) / X.shape[0]
-            return StochasticTensor(name='Emission', 
+            emission_matrix = StochasticTensor(name='Emission', 
                                     logits=torch.log(emission_freqs.expand(self.n_dims,-1)))
         else:
-            return StochasticTensor.from_dirichlet(name='Emission',
+            emission_matrix = StochasticTensor.from_dirichlet(name='Emission',
                                                    size=(self.n_dims,self.n_features),
                                                    prior=self.alpha)
+        return nn.ParameterDict({
+            'B': emission_matrix.logits
+        })
 
     def map_emission(self,x):
         batch_shaped = x.repeat(self.n_dims,1).T
         return self.pdf.log_prob(batch_shaped)
 
     def update_emission_params(self,X,posterior,theta=None):
-        self.emission_matrix.param.data = self._compute_emprobs(X,posterior,theta)
+        self.params.update({'B':self._compute_emprobs(X,posterior,theta)})
 
     def _compute_emprobs(self,
                         X:List[torch.Tensor],

@@ -27,6 +27,9 @@ class MixtureEmissions(BaseEmission, ABC):
 
     def __str__(self):
         return BaseEmission.__str__(self).replace(')',f', n_components={self.n_components})')
+    
+    def extra_repr(self) -> str:
+        return super().extra_repr() + f'\nn_components = {self.n_components}'
         
     @property
     def mixture_pdf(self) -> MixtureSameFamily:

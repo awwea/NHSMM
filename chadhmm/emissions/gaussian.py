@@ -26,8 +26,6 @@ class GaussianEmissions(BaseEmission):
         Minimum covariance for the mixture components.
     covariance_type (COVAR_TYPES):
         Type of covariance matrix to use for the mixture components. One of 'spherical', 'tied', 'diag', 'full'.
-    device (torch.device):
-        Device to use for computations.
     """
 
     COVAR_TYPES_HINT = Literal['spherical', 'tied', 'diag', 'full']
@@ -48,6 +46,8 @@ class GaussianEmissions(BaseEmission):
         sampled_params = self.sample_emission_params()
         self.means:nn.Parameter = sampled_params.get('means')
         self.covs:nn.Parameter = sampled_params.get('covs')
+        #self.params = self.sample_emission_params()
+        self.register_parameter('means',self.means)
 
     @property
     def pdf(self) -> MultivariateNormal:
@@ -69,7 +69,10 @@ class GaussianEmissions(BaseEmission):
             covs = self.min_covar + torch.eye(n=self.n_features, 
                                               dtype=torch.float64).expand((self.n_dims, self.n_features, self.n_features)).clone()
 
-        return nn.ParameterDict({'means':means,'covs':covs})
+        return nn.ParameterDict({
+            'means':nn.Parameter(means,requires_grad=False),
+            'covs':nn.Parameter(covs,requires_grad=False)
+        })
     
     def update_emission_params(self,X,posterior,theta=None):
         self.means.data = self._compute_means(X,posterior,theta)

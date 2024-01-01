@@ -70,7 +70,10 @@ class GaussianMixtureEmissions(MixtureEmissions):
             covs = self.min_covar + torch.eye(n=self.n_features, 
                                               dtype=torch.float64).expand((self.n_dims, self.n_components, self.n_features, self.n_features)).clone()
 
-        return nn.ParameterDict({'means':means,'covs':covs})
+        return nn.ParameterDict({
+            'means':nn.Parameter(means,requires_grad=False),
+            'covs':nn.Parameter(covs,requires_grad=False)
+        })
 
     def update_emission_params(self,X,posterior,theta=None):
         self.weights.param.data = self._compute_weights(posterior)

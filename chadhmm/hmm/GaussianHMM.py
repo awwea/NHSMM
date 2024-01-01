@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from typing import Optional, Literal
 
 from .BaseHMM import BaseHMM # type: ignore
@@ -40,22 +41,8 @@ class GaussianHMM(BaseHMM):
                  seed:Optional[int] = None):
 
         BaseHMM.__init__(self,n_states,alpha,seed)
-        self.emissions = GaussianEmissions(n_states,n_features,k_means,covariance_type,min_covar)
-
-    @property
-    def n_fit_params(self):
-        """Return the number of trainable model parameters."""
-        return {
-            'states': self.n_states,
-            'transitions': self.n_states**2,
-            'means': self.n_states * self.emissions.n_features,
-            'covars': {
-                'spherical': self.n_states,
-                'diag': self.n_states * self.emissions.n_features,
-                'full': self.n_states * self.emissions.n_features * (self.emissions.n_features + 1) // 2,
-                'tied': self.emissions.n_features * (self.emissions.n_features + 1) // 2,
-            }[self.emissions.covariance_type],
-        }
+        self.add_module('emissions',
+                        GaussianEmissions(n_states,n_features,k_means,covariance_type,min_covar))
 
     @property
     def dof(self):
@@ -71,8 +58,10 @@ class GaussianHMM(BaseHMM):
     def map_emission(self,x):
         return self.emissions.map_emission(x)
 
-    def sample_B_params(self,X,seed=None):
-        self.means, self.covs = self.emissions.sample_emission_params(X)
+    def sample_B_params(self,X=None):
+        sampled_params = self.emissions.sample_emission_params(X)
+        self.means:nn.Parameter = sampled_params.get('means')
+        self.covs:nn.Parameter = sampled_params.get('covs')
 
 
 class GaussianMixtureHMM(BaseHMM):
@@ -113,25 +102,8 @@ class GaussianMixtureHMM(BaseHMM):
                  seed: Optional[int] = None):
 
         BaseHMM.__init__(self,n_states,alpha,seed)
-        self.emissions = GaussianMixtureEmissions(n_states,n_features,n_components,k_means,alpha,covariance_type,min_covar,seed)
-
-    @property
-    def n_fit_params(self):
-        """Return the number of trainable model parameters."""
-        fit_params_dict = {
-            'states': self.n_states,
-            'transitions': self.n_states**2,
-            'weights': self.n_states * self.emissions.n_components,
-            'means': self.n_states * self.emissions.n_features * self.emissions.n_components,
-            'covars': {
-                'spherical': self.n_states,
-                'diag': self.n_states * self.emissions.n_features,
-                'full': self.n_states * self.emissions.n_features * (self.emissions.n_features + 1) // 2,
-                'tied': self.emissions.n_features * (self.emissions.n_features + 1) // 2,
-            }[self.emissions.covariance_type],
-        }
-
-        return fit_params_dict
+        self.add_module('emissions',
+                        GaussianMixtureEmissions(n_states,n_features,n_components,k_means,alpha,covariance_type,min_covar,seed))
 
     @property
     def dof(self):
@@ -151,5 +123,5 @@ class GaussianMixtureHMM(BaseHMM):
     def map_emission(self,x):
         return self.emissions.map_emission(x)
 
-    def sample_B_params(self,X,seed=None):
+    def sample_B_params(self,X=None):
         self._means, self._covs = self.emissions.sample_emission_params(X)

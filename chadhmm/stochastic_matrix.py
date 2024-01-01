@@ -1,11 +1,10 @@
 import torch
-import torch.nn as nn
 from torch.distributions import Categorical
 from typing import Union, Tuple, Literal
 from .utils import sample_logits, validate_logits # type: ignore
 
 
-class StochasticTensor(nn.Module):
+class StochasticTensor:
     """
     Class for constructing the Probability Tensors using PyTorch Categorical distribution. Internally this only stores the logits 
     aka log probabilities that are exposed to the Categorical distribution.
@@ -17,8 +16,6 @@ class StochasticTensor(nn.Module):
     name (MAT_TYPES_HINT):
         One of 'Transition','Emission','Duration','Weights','Matrix','Tensor','Initial' or 'Vector'
         This allows for validation of shapes and also identification.
-    device (torch.device):
-        On which device to move the Tensor.
     """
 
     MAT_TYPES_HINT = Literal['Transition','Emission','Duration','Weights','Matrix','Tensor','Initial','Vector']
@@ -27,33 +24,19 @@ class StochasticTensor(nn.Module):
                  logits:torch.Tensor,
                  name:MAT_TYPES_HINT):
         
-        super().__init__()
         self.name = name
         self.logits = logits
 
     def __str__(self):
-        return f"{self.name}(shape={self.shape})"
+        return f"{self.__class__.__name__}(kind = {self.name}\nsize = {tuple(self.shape)})"
 
     @property
     def logits(self) -> torch.Tensor:
-        return self.param.data
+        return self._logits
 
     @logits.setter
     def logits(self, log_probs:torch.Tensor):
-        self.param = nn.Parameter(validate_logits(log_probs,self.name),requires_grad=False)
-        self.register_parameter(self.name, self.param)
-
-    @property
-    def pmf(self) -> Categorical:
-        return Categorical(logits=self.param)
-    
-    @property
-    def shape(self) -> torch.Size:
-        return self.param.shape
-    
-    @property
-    def probs(self) -> torch.Tensor:
-        return self.logits.exp()
+        self._logits = validate_logits(log_probs, self.name)
 
     @classmethod
     def from_dirichlet(cls, 

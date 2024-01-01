@@ -17,6 +17,9 @@ class BaseEmission(nn.Module,ABC):
         
     def __str__(self):
         return f'{self.__class__.__name__}(n_dims={self.n_dims}, n_features={self.n_features})'
+    
+    def extra_repr(self) -> str:
+        return f'n_dims = {self.n_dims}\nn_features = {self.n_features}'
 
     def check_constraints(self,value:torch.Tensor) -> torch.Tensor:
         not_supported = value[torch.logical_not(self.pdf.support.check(value))].unique()

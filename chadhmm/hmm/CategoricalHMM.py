@@ -21,8 +21,6 @@ class CategoricalHMM(BaseHMM):
         Dirichlet concentration parameter for the prior over initial distribution, transition amd emission probabilities.
     seed (int):
         Random seed for reproducibility.
-    device (torch.device):
-        Device on which to fit the model.
     """
 
     def __init__(self,
@@ -32,15 +30,8 @@ class CategoricalHMM(BaseHMM):
                  seed:Optional[int] = None):
         
         BaseHMM.__init__(self,n_states,alpha,seed)
-        self.emissions = CategoricalEmissions(n_states,n_features,alpha)
-
-    @property
-    def n_fit_params(self):
-        return {
-            'initial_states': self.n_states,
-            'transitions': self.n_states**2,
-            'emissions': self.n_states * self.emissions.n_features    
-        }
+        self.add_module('emissions',
+                        CategoricalEmissions(n_states,n_features,alpha))
 
     @property
     def dof(self):
@@ -57,6 +48,6 @@ class CategoricalHMM(BaseHMM):
         return self.emissions.map_emission(x)
 
     def sample_B_params(self,X=None):
-        self._emission_matrix = self.emissions.sample_emission_params(X)
+        self.emissions.emission_matrix = self.emissions.sample_emission_params(X)
 
 
