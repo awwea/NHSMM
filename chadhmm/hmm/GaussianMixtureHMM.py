@@ -32,7 +32,7 @@ class GaussianMixtureHMM(BaseHMM):
     seed (Optional[int]):
         Random seed to use for reproducible results.
     """
-
+    __slots__ = 'n_components'
     COVAR_TYPES = Literal['spherical', 'tied', 'diag', 'full']
 
     def __init__(self,
@@ -60,11 +60,6 @@ class GaussianMixtureHMM(BaseHMM):
         """Return the emission distribution for Gaussian Mixture Distribution."""
         return MixtureSameFamily(Categorical(logits=self.params.weights),
                                  MultivariateNormal(self.params.means,self.params.covs))
-    
-    def map_emission(self,x):
-        b_size = (-1,self.n_states,-1) if x.ndim == 2 else (self.n_states,-1)
-        x_batched = x.unsqueeze(-2).expand(b_size)
-        return self.pdf.log_prob(x_batched)
     
     def sample_emission_params(self,X=None):
         weights = sample_logits(self.alpha,(self.n_states,self.n_components),False)

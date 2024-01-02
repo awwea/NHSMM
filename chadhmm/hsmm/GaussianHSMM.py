@@ -60,11 +60,6 @@ class GaussianHSMM(BaseHSMM):
     @property
     def pdf(self) -> MultivariateNormal:
         return MultivariateNormal(self.params.means,self.params.covs)
-    
-    def map_emission(self,x):
-        b_size = (-1,self.n_states,-1) if x.ndim == 2 else (self.n_states,-1)
-        x_batched = x.unsqueeze(-2).expand(b_size)
-        return self.pdf.log_prob(x_batched)
 
     def sample_emission_params(self,X=None):
         if X is not None:

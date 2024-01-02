@@ -7,7 +7,6 @@ from .BaseHMM import BaseHMM # type: ignore
 from ..utils import ContextualVariables, log_normalize, sample_logits # type: ignore
 
 
-
 class CategoricalHMM(BaseHMM):
     """
     Categorical Hidden Markov Model (HMM)
@@ -37,10 +36,6 @@ class CategoricalHMM(BaseHMM):
     @property
     def dof(self):
         return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1
-
-    def map_emission(self,x):
-        batch_shaped = x.repeat(self.n_states,1).T
-        return self.pdf.log_prob(batch_shaped)
     
     @property
     def pdf(self) -> Categorical:
@@ -48,7 +43,10 @@ class CategoricalHMM(BaseHMM):
 
     def estimate_emission_params(self,X,posterior,theta=None):
         return nn.ParameterDict({
-            'B':nn.Parameter(self._compute_emprobs(X,posterior,theta),requires_grad=False)
+            'B':nn.Parameter(
+                self._compute_emprobs(X,posterior,theta),
+                requires_grad=False
+            )
         })
 
     def sample_emission_params(self,X=None):
@@ -59,7 +57,10 @@ class CategoricalHMM(BaseHMM):
             emission_matrix = sample_logits(self.alpha,(self.n_states,self.n_features),False)
             
         return nn.ParameterDict({
-            'B':nn.Parameter(emission_matrix,requires_grad=False)
+            'B':nn.Parameter(
+                emission_matrix,
+                requires_grad=False
+            )
         })
 
     def _compute_emprobs(self,
@@ -77,8 +78,7 @@ class CategoricalHMM(BaseHMM):
             else:
                 masks = seq.view(1,-1) == self.pdf.enumerate_support(expand=False)
                 for i,mask in enumerate(masks):
-                    masked_gamma = gamma_val[mask]
-                    emission_mat[:,i] += masked_gamma.sum(dim=0)
+                    emission_mat[:,i] += gamma_val[mask].sum(dim=0)
 
         return log_normalize(emission_mat.log(),1)
 

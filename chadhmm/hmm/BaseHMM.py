@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod, abstractproperty
 
 import torch
 import torch.nn as nn
+from torch.distributions import Categorical, Distribution
 import numpy as np
 
 from ..utils import (ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
@@ -16,6 +17,7 @@ class BaseHMM(nn.Module,ABC):
     ----------
     Base Class of Hidden Markov Models (HMM) class that provides a foundation for building specific HMM models.
     """
+    __slots__ = 'n_states','n_features','params'
 
     def __init__(self,
                  n_states:int,
@@ -23,7 +25,7 @@ class BaseHMM(nn.Module,ABC):
                  alpha:float = 1.0,
                  seed:Optional[int] = None):
 
-        nn.Module.__init__(self)
+        super().__init__()
         self.n_states = n_states
         self.n_features = n_features
         self.alpha = alpha
@@ -35,17 +37,12 @@ class BaseHMM(nn.Module,ABC):
         self._seed_gen.seed
 
     @abstractproperty
-    def pdf(self):
+    def pdf(self) -> Distribution:
         pass
     
     @abstractproperty
     def dof(self):
         """Returns the degrees of freedom of the model."""
-        pass
-
-    @abstractmethod
-    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
-        """Get emission probabilities for a given sequence of observations."""
         pass
 
     @abstractmethod
@@ -60,9 +57,35 @@ class BaseHMM(nn.Module,ABC):
     def sample_emission_params(self, X:Optional[torch.Tensor]=None) -> nn.ParameterDict:
         """Sample the emission parameters."""
         pass
+        
+    def sample_model_params(self, alpha:float = 1.0, X:Optional[torch.Tensor]=None) -> nn.ParameterDict:
+        """Initialize the model parameters."""
+        model_params = self.sample_emission_params(X)
+        model_params.update(nn.ParameterDict({
+            'pi':nn.Parameter(
+                sample_logits(alpha,(self.n_states,),False),
+                requires_grad=False
+            ),
+            'A':nn.Parameter(
+                sample_logits(alpha,(self.n_states,self.n_states),False),
+                requires_grad=False
+            )
+        }))
 
+        return model_params
+
+    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
+        """Get emission probabilities for a given sequence of observations."""
+        pdf_shape = self.pdf.batch_shape + self.pdf.event_shape
+        b_size = torch.Size([torch.atleast_1d(x).size(0)]) + pdf_shape
+        x_batched = x.unsqueeze(-len(pdf_shape)).expand(b_size)
+        return self.pdf.log_prob(x_batched).squeeze()
+
+    # TODO: fix multiple sequence sampling
     def sample(self, size:Sequence[int]) -> torch.Tensor:
         """Sample from Markov chain, either 1D for a single sequence or 2D for multiple sample sequences given by 0 axis."""
+        pi_pdf = Categorical(logits=self.params.pi)
+        A_pdf = Categorical(logits=self.params.A)
         n_dim = len(size)
         if n_dim == 1:
             start_sample = torch.Size([1])
@@ -71,29 +94,16 @@ class BaseHMM(nn.Module,ABC):
         else:
             raise ValueError(f'Size must be at most 2-dimensional, got {n_dim}.')
         
-        sampled_paths = torch.hstack((self.initial_vector.pmf.sample(start_sample), 
-                                  torch.zeros(size,dtype=torch.int)))
+        sampled_paths = torch.hstack((pi_pdf.sample(start_sample),
+                                      torch.zeros(size,dtype=torch.int)))
         
-        for row,step in enumerate(self.transition_matrix.pmf.sample(torch.Size(size))):
+        for row,step in enumerate(A_pdf.sample(torch.Size(size))):
             sampled_paths[row+1] = step[sampled_paths[row]]
 
         return sampled_paths
-        
-    def sample_model_params(self, alpha:float = 1.0, X:Optional[torch.Tensor]=None) -> nn.ParameterDict:
-        """Initialize the model parameters."""
-        initial_vector = sample_logits(alpha,(self.n_states,),False)
-        transition_matrix = sample_logits(alpha,(self.n_states,self.n_states),False)
-        model_params = nn.ParameterDict({
-            'pi':nn.Parameter(initial_vector,requires_grad=False),
-            'A':nn.Parameter(transition_matrix,requires_grad=False)
-        })
-        model_params.update(self.sample_emission_params(X))
-
-        return model_params
     
     # TODO: torch.distributions.Distribution method _validate_sample does this but just on single batch
-    def check_constraints(self,
-                          value:torch.Tensor) -> torch.Tensor:
+    def check_constraints(self, value:torch.Tensor) -> torch.Tensor:
         not_supported = value[torch.logical_not(self.pdf.support.check(value))].unique()
         events = self.pdf.event_shape
         event_dims = len(events)
@@ -164,7 +174,7 @@ class BaseHMM(nn.Module,ABC):
             self.conv.push_pull(sum(self._compute_log_likelihood(X_valid)),0,rank)
             for iter in range(1,self.conv.max_iter+1):
                 # EM algorithm step
-                self._update_model(X_valid, valid_theta)
+                self.params.update(self._estimate_model_params(X_valid,valid_theta))
 
                 # remap emission probabilities after update of B
                 X_valid.log_probs = [self.map_emission(x) for x in X_valid.X]
@@ -245,8 +255,8 @@ class BaseHMM(nn.Module,ABC):
         """Backward pass of the forward-backward algorithm."""
         beta_vec = []
         for seq_len,_,log_probs in sequence_generator(X):
-            log_beta = torch.zeros(size=(seq_len,self.n_states), 
-                               dtype=torch.float64)
+            log_beta = torch.zeros(size=(seq_len,self.n_states),
+                                   dtype=torch.float64)
             
             for t in reversed(range(seq_len-1)):
                 log_beta[t] = torch.logsumexp(self.params.A + log_probs[t+1] + log_beta[t+1], dim=1)
@@ -259,7 +269,7 @@ class BaseHMM(nn.Module,ABC):
         """Compute the log-Gamma variable in Hidden Markov Model."""
         gamma_vec = []
         for alpha,beta in zip(log_alpha,log_beta):
-            gamma_vec.append(log_normalize(alpha+beta,1))
+            gamma_vec.append(log_normalize(alpha+beta))
 
         return gamma_vec
     
@@ -267,14 +277,13 @@ class BaseHMM(nn.Module,ABC):
         """Compute the log-Xi variable in Hidden Markov Model."""
         xi_vec = []
         for (seq_len,_,log_probs),alpha,beta in zip(sequence_generator(X),log_alpha,log_beta):
-            log_xi = torch.zeros(size=(seq_len-1, self.n_states, self.n_states),
+            log_xi = torch.zeros(size=(seq_len-1,self.n_states,self.n_states),
                                  dtype=torch.float64)
             
             for t in range(seq_len-1):
                 log_xi[t] = alpha[t].reshape(-1,1) + self.params.A + log_probs[t+1] + beta[t+1]
 
-            log_xi -= alpha[-1].logsumexp(dim=0)
-            xi_vec.append(log_xi)
+            xi_vec.append(log_normalize(log_xi,(1,2)))
 
         return xi_vec
 
@@ -304,21 +313,27 @@ class BaseHMM(nn.Module,ABC):
         for xi in log_xi:
             log_A += xi.exp().sum(dim=0)
 
-        return log_normalize(log_A.log(),1)
+        return log_normalize(log_A.log())
     
-    def _update_model(self, X:Observations, theta:Optional[ContextualVariables]) -> float:
+    def _estimate_model_params(self, X:Observations, theta:Optional[ContextualVariables]) -> nn.ParameterDict:
         """Compute the updated parameters for the model."""
         log_gamma,log_xi = self._compute_posteriors(X)
         gamma = [torch.exp(gamma) for gamma in log_gamma]
 
-        new_params = nn.ParameterDict({
-            'pi':nn.Parameter(self._accum_pi(log_gamma),requires_grad=False),
-            'A':nn.Parameter(self._accum_A(log_xi),requires_grad=False)
+        new_params = self.estimate_emission_params(X.X,gamma,theta)
+        new_params.update(nn.ParameterDict({
+            'pi':nn.Parameter(
+                self._accum_pi(log_gamma),
+                requires_grad=False
+            ),
+            'A':nn.Parameter(
+                self._accum_A(log_xi),
+                requires_grad=False
+            )
         })
-        new_params.update(self.estimate_emission_params(X.X,gamma,theta))
-        self.params.update(new_params)
-
-        return sum(self._compute_log_likelihood(X))
+        )
+    
+        return new_params
     
     def _viterbi(self, X:Observations) -> Sequence[torch.Tensor]:
         """Viterbi algorithm for decoding the most likely sequence of hidden states."""

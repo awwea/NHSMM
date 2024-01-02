@@ -40,11 +40,6 @@ class PoissonHMM(BaseHMM):
     @property
     def pdf(self) -> Independent:
         return Independent(Poisson(self.params.rates),1)
-    
-    def map_emission(self,x):
-        b_size = (-1,self.n_states,-1) if x.ndim == 2 else (self.n_states,-1)
-        x_batched = x.unsqueeze(-2).expand(b_size)
-        return self.pdf.log_prob(x_batched)
 
     def sample_emission_params(self,X=None):
         if X is not None:
@@ -70,7 +65,7 @@ class PoissonHMM(BaseHMM):
         new_rates = torch.zeros(size=(self.n_states, self.n_features), 
                                dtype=torch.float64)
         
-        denom = torch.zeros(size=(self.n_states,1), 
+        denom = torch.zeros(size=(self.n_states,1),
                             dtype=torch.float64)
         
         for seq,gamma_val in zip(X,posterior):

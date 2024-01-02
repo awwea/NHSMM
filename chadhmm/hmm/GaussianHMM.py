@@ -7,6 +7,7 @@ from sklearn.cluster import KMeans # type: ignore
 from .BaseHMM import BaseHMM # type: ignore
 from ..utils import ContextualVariables # type: ignore
 
+
 class GaussianHMM(BaseHMM):
     """
     Gaussian Hidden Markov Model (Gaussian HMM)
@@ -53,11 +54,6 @@ class GaussianHMM(BaseHMM):
     @property
     def pdf(self) -> MultivariateNormal:
         return MultivariateNormal(self.params.means,self.params.covs)
-    
-    def map_emission(self,x):
-        b_size = (-1,self.n_states,-1) if x.ndim == 2 else (self.n_states,-1)
-        x_batched = x.unsqueeze(-2).expand(b_size)
-        return self.pdf.log_prob(x_batched)
 
     def sample_emission_params(self,X=None):
         if X is not None:
@@ -93,7 +89,7 @@ class GaussianHMM(BaseHMM):
                        posterior:List[torch.Tensor],
                        theta:Optional[ContextualVariables]=None) -> torch.Tensor:
         """Compute the means for each hidden state"""
-        new_mean = torch.zeros(size=(self.n_states, self.n_features), 
+        new_mean = torch.zeros(size=(self.n_states,self.n_features), 
                                dtype=torch.float64)
         
         denom = torch.zeros(size=(self.n_states,1), 
@@ -125,6 +121,7 @@ class GaussianHMM(BaseHMM):
                 # TODO: matmul shapes are inconsistent 
                 raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
             else:
+                # TODO: Uses old mean value of normal distribution
                 gamma_expanded = gamma_val.T.unsqueeze(-1)
                 diff = seq.expand(self.n_states,-1,-1) - self.params.means.unsqueeze(1)
                 new_covs += torch.transpose(gamma_expanded * diff,1,2) @ diff

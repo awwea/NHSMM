@@ -1,31 +1,27 @@
 # Chad Hidden Markov Models (ChadHMM)
+[![GitHub license](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/drkostas/pyemail-sender/master/LICENSE)
 
 > **NOTE:**
 > This package is still in its early stages, documentation might not reflect every method mentioned above, please feel free to contribute and make this more coherent.
 
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li><a href="#about-the-project">About The Project</a></li>
-    <li><a href="#getting-started">Getting Started</a></li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#references">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-  </ol>
-</details>
+## Table of Contents
 
-<!-- ABOUT THE PROJECT -->
-## About The Project
++ [About The Project](#about)
++ [Getting Started](#getting_started)
++ [Usage](#usage)
++ [Unit Tests](#unit_tests)
++ [References](#references)
++ [License](#license)
 
-This repository was created as an attempt to learn and recreate the parameter estimation for Hidden Markov Models using PyTorch library. Included are models with Categorical and Gaussian emissions, for both Hidden Markov Models (HMM) and Hidden Semi-Markov Models(HSMM). As en extension I am trying to include models where the parameter estimation depends on certain set of external variables, these models are referred to as Contextual HMM or Parametric/Conditional HMM where the emission probabilities/distribution paramters are influenced by the context.
+## About <a name = "about"></a>
 
-The documentation on the parameter estimation and model description is captured in [docs](https://github.com/GarroshIcecream/ChadHMM//tree/master/docs) folder. Furthermore, there are [examples](https://github.com/GarroshIcecream/ChadHMM//tree/master/tests) of the usage, especially on the financial time series, focusing on the sequence prediction but also on the possible interpretation of the model parameters.
+This repository was created as an attempt to learn and recreate the parameter estimation for Hidden Markov Models using PyTorch library. Included are models with Categorical and Gaussian emissions for both Hidden Markov Models (HMM) and Hidden Semi-Markov Models(HSMM). As en extension I am trying to include models where the parameter estimation depends on certain set of external variables, these models are referred to as Contextual HMM or Parametric/Conditional HMM where the emission probabilities/distribution paramters are influenced by the context either time dependent or independent.
 
-<!-- GETTING STARTED -->
-## Getting Started
+[PYPI Package](https://pypi.org/project/chadhmm/)
+
+The documentation on the parameter estimation and model description is captured in - now empty - [docs](https://github.com/GarroshIcecream/ChadHMM//tree/master/docs) folder. Furthermore, there are [examples](https://github.com/GarroshIcecream/ChadHMM//tree/master/tests) of the usage, especially on the financial time series, focusing on the sequence prediction but also on the possible interpretation of the model parameters.
+
+## Getting Started <a name = "getting_started"></a>
 
 This is an example of how you may give instructions on setting up your project locally.
 To get a local copy up and running follow these simple example steps.
@@ -39,50 +35,40 @@ To get a local copy up and running follow these simple example steps.
    pip install chadhmm
    ```
 
-<!-- USAGE EXAMPLES -->
-## Usage
+## Usage <a name = "usage"></a>
 
 Please refer to the [docs](https://github.com/GarroshIcecream/ChadHMM//tree/master/docs) for more detailed guide on how to create, train and predict sequences using Hidden Markov Models. There is also a section dedicated to visualizing the model parameters as well as its sequence predictions.
 
-<!-- ROADMAP -->
-## Roadmap
+## Roadmap <a name = "roadmap"></a>
 
-- [ ] Hidden Semi Markov Model numerical instability
-    - [ ] Fix computation of posteriors 
-    - [x] Fix mean and covariance update in HSMM
-- [ ] Implementation of Viterbi algorithm for HSMM
-- [X] K-Means for Gaussian means initialization
-- [ ] Improve the docs with examples
-    - [ ] Application on financial time series prediction
-- [ ] Code base refactor, abstractions might be confusing
+- [ ] Hidden Semi Markov Models
+  - [ ] Fix computation of posteriors 
+  - [ ] Implementation of Viterbi algorithm for HSMM
+  - [x] Fix mean and covariance update in HSMM
 - [ ] Integration of contextual models
   - [ ] Time dependent context to be implemented
   - [ ] Contextual Variables for covariances using GEM (Genereliazed Expectation Maximization algo)
   - [ ] Contextual variables for Categorical emissions
+- [ ] Implement different types of covariance matrices
+  - [ ] Connect that into degrees of freedom
+- [ ] Improve the docs with examples
+    - [ ] Application on financial time series prediction
+- [ ] Support for CUDA training
 - [x] Support for wider range of emissions distributions
-- [ ] More visual tools for model interpretations
-- [ ] Performance improvements
-    - [ ] TorchDynamo?
-    - [ ] CUDA optimizations
+- [X] K-Means for Gaussian means initialization
+- [x] Code base refactor, abstractions might be confusing
 
 See the [open issues](https://github.com/GarroshIcecream/ChadHMM/issues) for a full list of proposed features (and known issues).
 
-<!-- CONTRIBUTING -->
-## Contributing
+## Unit Tests <a name = "unit_tests"></a>
 
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+If you want to run the unit tests, execute the following command:
 
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue.
-Don't forget to give the project a star! Thanks again!
+```ShellSession
+$ make tests
+```
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a [Pull Request](https://github.com/GarroshIcecream/ChadHMM/pulls)
-
-<!-- REFERENCES -->
-## References
+## References <a name = "references"></a>
 
 Implementations are based on:
 
@@ -95,17 +81,13 @@ Implementations are based on:
 - Contextual HMM and HSMM:
   - ["Contextual Hidden Markov Models"](https://www.researchgate.net/publication/261490802_Contextual_Hidden_Markov_Models) by Thierry Artieres from Ecole Centrale de Marseille
 
-<!-- LICENSE -->
-## License
+## License <a name = "license"></a>
 
-Distributed under the MIT License. See `LICENSE.txt` for more information.
-
-
+This project is licensed under the MIT License - see
+the [LICENSE](https://github.com/GarroshIcecream/ChadHMM/blob/master/LICENSE) file for details.
 
 
-
-
-
+<a href="https://www.buymeacoffee.com/adpesek13n" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
 
 
 

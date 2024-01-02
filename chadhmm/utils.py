@@ -22,7 +22,7 @@ class Observations:
 class ContextualVariables:
     """Dataclass for contextual variables."""
     n_context: int
-    matrix: List[torch.Tensor]
+    X: List[torch.Tensor]
     time_dependent: bool = field(default=False)
 
 class SeedGenerator:
@@ -188,7 +188,7 @@ def sample_logits(prior: float, target_size: Union[Tuple[int,...],torch.Size], s
 
     return probs.log()
 
-def log_normalize(matrix:torch.Tensor, dim:int=0) -> torch.Tensor:
+def log_normalize(matrix:torch.Tensor, dim:Union[int,Tuple[int,...]]=1) -> torch.Tensor:
     """Normalize a posterior probability matrix"""
     return matrix - matrix.logsumexp(dim,True)
 

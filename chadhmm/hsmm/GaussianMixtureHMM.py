@@ -65,11 +65,6 @@ class GaussianMixtureHSMM(BaseHSMM):
         return MixtureSameFamily(Categorical(logits=self.params.weights),
                                  MultivariateNormal(self.params.means,self.params.covs))
     
-    def map_emission(self,x):
-        b_size = (-1,self.n_states,-1) if x.ndim == 2 else (self.n_states,-1)
-        x_batched = x.unsqueeze(-2).expand(b_size)
-        return self.pdf.log_prob(x_batched)
-    
     def sample_emission_params(self,X=None):
         weights = sample_logits(self.alpha,(self.n_states,self.n_components),False)
         if X is not None:

@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod, abstractproperty
 
 import torch
 import torch.nn as nn
+from torch.distributions import Categorical, Distribution
 import numpy as np
 
 from ..utils import (ContextualVariables, ConvergenceHandler, Observations, SeedGenerator,
@@ -25,7 +26,7 @@ class BaseHSMM(nn.Module,ABC):
                  alpha:float = 1.0,
                  seed:Optional[int] = None):
         
-        nn.Module.__init__(self)
+        super().__init__()
         self.n_states = n_states
         self.n_features = n_features
         self.max_duration = max_duration
@@ -38,17 +39,12 @@ class BaseHSMM(nn.Module,ABC):
         self._seed_gen.seed
 
     @abstractproperty
-    def pdf(self):
+    def pdf(self) -> Distribution:
         pass
     
     @abstractproperty
     def dof(self):
         """Returns the degrees of freedom of the model."""
-        pass
-
-    @abstractmethod
-    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
-        """Get emission probabilities for a given sequence of observations."""
         pass
 
     @abstractmethod
@@ -64,17 +60,30 @@ class BaseHSMM(nn.Module,ABC):
         """Sample the emission parameters."""
         pass
 
+    def map_emission(self, x:torch.Tensor) -> torch.Tensor:
+        """Get emission probabilities for a given sequence of observations."""
+        pdf_shape = self.pdf.batch_shape + self.pdf.event_shape
+        b_size = torch.Size([torch.atleast_1d(x).size(0)]) + pdf_shape
+        x_batched = x.unsqueeze(-len(pdf_shape)).expand(b_size)
+        return self.pdf.log_prob(x_batched).squeeze()
+
     def sample_model_params(self, alpha:float = 1.0, X:Optional[torch.Tensor]=None) -> nn.ParameterDict:
         """Initialize the model parameters."""
-        initial_vector = sample_logits(alpha,(self.n_states,),False)
-        transition_matrix = sample_logits(alpha,(self.n_states,self.n_states),True)
-        duration_matrix = sample_logits(alpha,(self.n_states,self.max_duration),False)
-        model_params = nn.ParameterDict({
-            'pi':nn.Parameter(initial_vector,requires_grad=False),
-            'A':nn.Parameter(transition_matrix,requires_grad=False),
-            'D':nn.Parameter(duration_matrix,requires_grad=False)
-        })
-        model_params.update(self.sample_emission_params(X))
+        model_params = self.sample_emission_params(X)
+        model_params.update(nn.ParameterDict({
+            'pi':nn.Parameter(
+                sample_logits(alpha,(self.n_states,),False),
+                requires_grad=False
+            ),
+            'A':nn.Parameter(
+                sample_logits(alpha,(self.n_states,self.n_states),True),
+                requires_grad=False
+            ),
+            'D':nn.Parameter(
+                sample_logits(alpha,(self.n_states,self.max_duration),False),
+                requires_grad=False
+            )
+        }))
 
         return model_params
     
@@ -113,8 +122,7 @@ class BaseHSMM(nn.Module,ABC):
         pass
     
     # TODO: torch.distributions.Distribution method _validate_sample does this but just on single batch
-    def check_constraints(self,
-                          value:torch.Tensor) -> torch.Tensor:
+    def check_constraints(self, value:torch.Tensor) -> torch.Tensor:
         not_supported = value[torch.logical_not(self.pdf.support.check(value))].unique()
         events = self.pdf.event_shape
         event_dims = len(events)
@@ -155,7 +163,7 @@ class BaseHSMM(nn.Module,ABC):
             self.conv.push_pull(sum(self._compute_log_likelihood(X_valid)),0,rank)
             for iter in range(1,self.conv.max_iter+1):
                 # EM algorithm step
-                self._update_model(X_valid, valid_theta)
+                self.params.update(self._estimate_model_params(X_valid, valid_theta))
 
                 # remap emission probabilities after update of B
                 X_valid.log_probs = [self.map_emission(x) for x in X_valid.X]
@@ -257,12 +265,11 @@ class BaseHSMM(nn.Module,ABC):
                                     dtype=torch.float64)
 
             real_xi = xi.exp()
-            log_gamma[-1] = alpha[-1].logsumexp(dim=1)
+            log_gamma[-1] = alpha[-1].logsumexp(1)
             for t in reversed(range(seq_len-1)):
                 log_gamma[t] = torch.log(log_gamma[t+1].exp() + torch.sum(real_xi[t] - real_xi[t].transpose(-2,-1),dim=1))
 
-            log_gamma -= alpha[-1].logsumexp(dim=(0,1))
-            gamma_vec.append(log_gamma)
+            gamma_vec.append(log_normalize(log_gamma))
 
         return gamma_vec
 
@@ -292,12 +299,11 @@ class BaseHSMM(nn.Module,ABC):
                 trains_alpha_sum = torch.logsumexp(alpha[t,:,0].reshape(-1,1) + self.params.A, dim=0)
                 log_eta[t] = beta[t+1] + self.params.D + (log_probs[t+1] + trains_alpha_sum).reshape(-1, 1) 
 
-            log_eta -= alpha[-1].logsumexp(dim=(0,1))
-            eta_vec.append(log_eta)
+            eta_vec.append(log_normalize(log_eta))
         
         return eta_vec
 
-    def _compute_posteriors(self, X:Observations) -> Tuple[List[torch.Tensor],List[torch.Tensor],List[torch.Tensor]]:
+    def _compute_posteriors(self, X:Observations) -> Tuple[List[torch.Tensor],...]:
         """Execute the forward-backward algorithm and compute the log-Gamma, log-Xi and Log-Eta variables."""
         log_alpha = self._forward(X)
         log_beta = self._backward(X)
@@ -305,9 +311,8 @@ class BaseHSMM(nn.Module,ABC):
         log_eta = self._eta(X,log_alpha,log_beta)
         log_gamma = self._gamma(X,log_alpha,log_xi)
 
-        # TODO: Normalize the Xi after being used in gamma estimation
-        for i,(xi,alpha) in enumerate(zip(log_xi,log_alpha)):
-            log_xi[i] = xi - alpha[-1].logsumexp(dim=(0,1))
+        # Normalize the Xi after being used in gamma estimation
+        log_xi = [log_normalize(xi,(1,2)) for xi in log_xi]
 
         return log_gamma, log_xi, log_eta
     
@@ -318,7 +323,7 @@ class BaseHSMM(nn.Module,ABC):
 
         for gamma in log_gamma:
             log_pi += gamma[0].exp()
-        
+            
         return log_normalize(log_pi.log(),0)
 
     def _accum_A(self, log_xi:List[torch.Tensor]) -> torch.Tensor:
@@ -327,9 +332,9 @@ class BaseHSMM(nn.Module,ABC):
                              dtype=torch.float64)
         
         for xi in log_xi:
-            log_A += xi.exp().sum(dim=0)
+            log_A += xi.exp().sum(0)
 
-        return log_normalize(log_A.log(),1)
+        return log_normalize(log_A.log())
 
     def _accum_D(self, log_eta:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the transition matrix."""
@@ -337,22 +342,32 @@ class BaseHSMM(nn.Module,ABC):
                              dtype=torch.float64)
         
         for eta in log_eta:
-            log_D += eta.exp().sum(dim=0)
+            log_D += eta.exp().sum(0)
 
-        return log_normalize(log_D.log(),1)
+        return log_normalize(log_D.log())
 
-    def _update_model(self, X:Observations, theta:Optional[ContextualVariables]):
+    def _estimate_model_params(self, X:Observations, theta:Optional[ContextualVariables]) -> nn.ParameterDict:
         """Compute the updated parameters for the model."""
         log_gamma, log_xi, log_eta = self._compute_posteriors(X)
         gamma = [torch.exp(gamma) for gamma in log_gamma]
 
-        new_params = nn.ParameterDict({
-            'pi':nn.Parameter(self._accum_pi(log_gamma),requires_grad=False),
-            'A':nn.Parameter(self._accum_A(log_xi),requires_grad=False),
-            'D':nn.Parameter(self._accum_D(log_eta),requires_grad=False)
-        })
-        new_params.update(self.estimate_emission_params(X.X,gamma,theta))
-        self.params.update(new_params)
+        new_params = self.estimate_emission_params(X.X,gamma,theta)
+        new_params.update(nn.ParameterDict({
+            'pi':nn.Parameter(
+                self._accum_pi(log_gamma),
+                requires_grad=False
+            ),
+            'A':nn.Parameter(
+                self._accum_A(log_xi),
+                requires_grad=False
+            ),
+            'D':nn.Parameter(
+                self._accum_D(log_eta),
+                requires_grad=False
+            )
+        }))
+        
+        return new_params
 
     def _viterbi(self, X:Observations) -> Sequence[torch.Tensor]:
         """Viterbi algorithm for decoding the most likely sequence of hidden states."""
