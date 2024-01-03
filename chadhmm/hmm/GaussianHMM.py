@@ -72,9 +72,10 @@ class GaussianHMM(BaseHMM):
         })
 
     def estimate_emission_params(self,X,posterior,theta=None):
+        real_post = [torch.exp(gamma) for gamma in posterior]
         return nn.ParameterDict({
-            'means':nn.Parameter(self._compute_means(X,posterior,theta),requires_grad=False),
-            'covs':nn.Parameter(self._compute_covs(X,posterior,theta),requires_grad=False)
+            'means':nn.Parameter(self._compute_means(X,real_post,theta),requires_grad=False),
+            'covs':nn.Parameter(self._compute_covs(X,real_post,theta),requires_grad=False)
         })
 
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
@@ -92,17 +93,14 @@ class GaussianHMM(BaseHMM):
         new_mean = torch.zeros(size=(self.n_states,self.n_features), 
                                dtype=torch.float64)
         
-        denom = torch.zeros(size=(self.n_states,1), 
-                            dtype=torch.float64)
-        
         for seq,gamma_val in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent 
                 raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
             else:
                 new_mean += gamma_val.T @ seq
-                denom += gamma_val.T.sum(dim=-1,keepdim=True)
 
+        denom = torch.cat(posterior,0).sum(0,keepdim=True).T
         return new_mean / denom
     
     def _compute_covs(self, 
@@ -113,9 +111,6 @@ class GaussianHMM(BaseHMM):
         new_covs = torch.zeros(size=(self.n_states,self.n_features, self.n_features), 
                                dtype=torch.float64)
         
-        denom = torch.zeros(size=(self.n_states,1,1), 
-                            dtype=torch.float64)
-
         for seq,gamma_val in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent 
@@ -125,9 +120,8 @@ class GaussianHMM(BaseHMM):
                 gamma_expanded = gamma_val.T.unsqueeze(-1)
                 diff = seq.expand(self.n_states,-1,-1) - self.params.means.unsqueeze(1)
                 new_covs += torch.transpose(gamma_expanded * diff,1,2) @ diff
-                denom += torch.sum(gamma_expanded,dim=-2,keepdim=True)
 
-        new_covs /= denom
+        new_covs /= torch.cat(posterior,0).sum(0,keepdim=True).T.unsqueeze(-1)
         new_covs += self.min_covar * torch.eye(self.n_features)
 
         return new_covs

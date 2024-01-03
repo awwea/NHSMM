@@ -36,14 +36,14 @@ class GaussianMixtureHMM(BaseHMM):
     COVAR_TYPES = Literal['spherical', 'tied', 'diag', 'full']
 
     def __init__(self,
-                 n_states: int,
-                 n_features: int,
-                 n_components: int = 1,
-                 k_means: bool = False,
-                 alpha: float = 1.0,
-                 covariance_type: COVAR_TYPES = 'full',
-                 min_covar: float = 1e-3,
-                 seed: Optional[int] = None):
+                 n_states:int,
+                 n_features:int,
+                 n_components:int = 1,
+                 k_means:bool = False,
+                 alpha:float = 1.0,
+                 covariance_type:COVAR_TYPES = 'full',
+                 min_covar:float = 1e-3,
+                 seed:Optional[int] = None):
 
         self.min_covar = min_covar
         self.k_means = k_means
@@ -81,10 +81,8 @@ class GaussianMixtureHMM(BaseHMM):
         })
     
     def estimate_emission_params(self,X,posterior,theta):
-        posterior_vec = []
         resp_vec = self._compute_responsibilities(X)
-        for resp,post in zip(resp_vec,posterior):
-            posterior_vec.append(torch.exp(resp + post.T.unsqueeze(1)))
+        posterior_vec = [torch.exp(resp + post.unsqueeze(-1)) for resp,post in zip(resp_vec,posterior)]
 
         return nn.ParameterDict({
             'weights':nn.Parameter(self._compute_weights(posterior_vec),requires_grad=False),
@@ -104,24 +102,19 @@ class GaussianMixtureHMM(BaseHMM):
         resp_vec = []
         for seq in X:
             n_observations = seq.size(dim=0)
-            log_responsibilities = torch.zeros(size=(self.n_states,self.n_components,n_observations), 
+            log_responsibilities = torch.zeros(size=(n_observations,self.n_states,self.n_components), 
                                                dtype=torch.float64)
 
             for t in range(n_observations):
-                log_responsibilities[...,t] = log_normalize(self.params.weights + self.pdf.component_distribution.log_prob(seq[t]),1)
+                log_responsibilities[t] = log_normalize(self.params.weights + self.pdf.component_distribution.log_prob(seq[t]))
 
             resp_vec.append(log_responsibilities)
         
         return resp_vec
     
     def _compute_weights(self, posterior:List[torch.Tensor]) -> torch.Tensor:
-        log_weights = torch.zeros(size=(self.n_states,self.n_components),
-                                  dtype=torch.float64)
-
-        for p in posterior:
-            log_weights += p.exp().sum(-1)
-        
-        return log_normalize(log_weights.log(),1)
+        post_concat = torch.cat(posterior).sum(0).log()
+        return log_normalize(post_concat)
     
     def _compute_means(self,
                        X:List[torch.Tensor], 
@@ -131,18 +124,15 @@ class GaussianMixtureHMM(BaseHMM):
         new_mean = torch.zeros(size=(self.n_states,self.n_components,self.n_features), 
                                dtype=torch.float64)
         
-        denom = torch.zeros(size=(self.n_states,self.n_components,1), 
-                            dtype=torch.float64)
-        
         for seq,resp in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent
                 raise NotImplementedError('Contextualized emissions not implemented for GaussianMixtureHMM')
             else:
-                new_mean += resp @ seq
-                denom += resp.sum(dim=-1,keepdim=True)
-
-        return new_mean / denom
+                new_mean += resp.permute(1,2,0) @ seq
+        
+        new_mean /= torch.cat(posterior).sum(0,keepdim=True).permute(1,2,0)
+        return new_mean
     
     def _compute_covs(self,
                       X:List[torch.Tensor],
@@ -152,20 +142,16 @@ class GaussianMixtureHMM(BaseHMM):
         new_covs = torch.zeros(size=(self.n_states,self.n_components,self.n_features,self.n_features), 
                                dtype=torch.float64)
         
-        denom = torch.zeros(size=(self.n_states,self.n_components,1,1), 
-                            dtype=torch.float64)
-
         for seq,resp in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent 
                 raise NotImplementedError('Contextualized emissions not implemented for GaussianMixtureHMM')
             else:
-                resp_expanded = resp.unsqueeze(-1)
+                resp_expanded = resp.permute(1,2,0).unsqueeze(-1)
                 diff = seq.unsqueeze(0).expand(self.n_states,self.n_components,-1,-1) - self.params.means.unsqueeze(2)
                 new_covs += torch.transpose(diff * resp_expanded,2,3) @ diff
-                denom += torch.sum(resp_expanded,dim=-2,keepdim=True)
 
-        new_covs /= denom
+        new_covs /= torch.cat(posterior).sum(0,keepdim=True).permute(1,2,0).unsqueeze(-1)
         new_covs += self.min_covar * torch.eye(self.n_features)
         
         return new_covs

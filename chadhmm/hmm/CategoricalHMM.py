@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical # type: ignore
@@ -42,9 +42,10 @@ class CategoricalHMM(BaseHMM):
         return Categorical(logits=self.params.B)
 
     def estimate_emission_params(self,X,posterior,theta=None):
+        real_post = [torch.exp(gamma) for gamma in posterior]
         return nn.ParameterDict({
             'B':nn.Parameter(
-                self._compute_emprobs(X,posterior,theta),
+                self._compute_emprobs(X,real_post,theta),
                 requires_grad=False
             )
         })
@@ -64,10 +65,11 @@ class CategoricalHMM(BaseHMM):
         })
 
     def _compute_emprobs(self,
-                        X:List[torch.Tensor],
-                        posterior:List[torch.Tensor],
-                        theta:Optional[ContextualVariables]=None) -> torch.Tensor: 
+                         X:Tuple[torch.Tensor,...],
+                         posterior:List[torch.Tensor],
+                         theta:Optional[ContextualVariables]=None) -> torch.Tensor: 
         """Compute the emission probabilities for each hidden state."""
+        pdf_support = self.pdf.enumerate_support(expand=False)
         emission_mat = torch.zeros(size=(self.n_states,self.n_features),
                                    dtype=torch.float64)
 
@@ -76,7 +78,7 @@ class CategoricalHMM(BaseHMM):
                 #TODO: Implement contextualized emissions
                 raise NotImplementedError('Contextualized emissions not implemented for CategoricalEmissions')
             else:
-                masks = seq.view(1,-1) == self.pdf.enumerate_support(expand=False)
+                masks = seq.unsqueeze(0) == pdf_support
                 for i,mask in enumerate(masks):
                     emission_mat[:,i] += gamma_val[mask].sum(dim=0)
 

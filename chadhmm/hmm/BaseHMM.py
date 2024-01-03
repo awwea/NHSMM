@@ -47,7 +47,7 @@ class BaseHMM(nn.Module,ABC):
 
     @abstractmethod
     def estimate_emission_params(self, 
-                                 X:List[torch.Tensor], 
+                                 X:Tuple[torch.Tensor,...], 
                                  posterior:List[torch.Tensor], 
                                  theta:Optional[ContextualVariables]) -> nn.ParameterDict:
         """Update the emission parameters."""
@@ -113,18 +113,15 @@ class BaseHMM(nn.Module,ABC):
             assert value.shape[1:] == events, ValueError(f'PDF event shape differs, expected {events} but got {value.shape[1:]}')
         return value
 
-    def to_observations(self, X:torch.Tensor, lengths:Optional[List[int]]=None) -> Observations:
+    def to_observations(self, X:torch.Tensor, lengths:Optional[Tuple[int,...]]=None) -> Observations:
         """Convert a sequence of observations to an Observations object."""
         X_valid = self.check_constraints(X)
-        n_samples = X_valid.shape[0]
-        seq_lenghts = [n_samples] if lengths is None else lengths
-        X_vec = list(torch.split(X_valid, seq_lenghts))
-
-        log_probs = []
-        for seq in X_vec:
-            log_probs.append(self.map_emission(seq))
+        n_samples = X_valid.size(0)
+        seq_lenghts = (n_samples,) if lengths is None else lengths
+        X_vec = torch.split(X_valid, list(seq_lenghts))
+        log_probs = [self.map_emission(seq) for seq in X_vec]
         
-        return Observations(n_samples,X_vec,log_probs,seq_lenghts,len(seq_lenghts))  
+        return Observations(n_samples,X_vec,seq_lenghts,log_probs,len(seq_lenghts))  
     
     def to_contextuals(self, theta:torch.Tensor, X:Observations) -> ContextualVariables:
         """Returns the parameters of the model."""
@@ -140,20 +137,20 @@ class BaseHMM(nn.Module,ABC):
             if not time_dependent:
                 adj_theta = adj_theta.expand(n_context+1, X.n_samples)
 
-            context_matrix = list(torch.split(adj_theta,X.lengths,1))
+            context_matrix = torch.split(adj_theta,list(X.lengths),1)
             return ContextualVariables(n_context, context_matrix, time_dependent) 
 
     def fit(self,
             X:torch.Tensor,
-            tol:float=1e-2,
-            max_iter:int=20,
+            tol:float=0.01,
+            max_iter:int=15,
             n_init:int=1,
-            post_conv_iter:int=3,
+            post_conv_iter:int=2,
             ignore_conv:bool=False,
             sample_B_from_X:bool=False,
             verbose:bool=True,
             plot_conv:bool=False,
-            lengths:Optional[List[int]]=None,
+            lengths:Optional[Tuple[int,...]]=None,
             theta:Optional[torch.Tensor]=None):
         """Fit the model to the given sequence using the EM algorithm."""
         if sample_B_from_X:
@@ -192,7 +189,7 @@ class BaseHMM(nn.Module,ABC):
 
     def predict(self, 
                 X:torch.Tensor, 
-                lengths:Optional[List[int]] = None,
+                lengths:Optional[Tuple[int,...]] = None,
                 algorithm:Literal['map','viterbi'] = 'viterbi') -> Tuple[List[float],Sequence[torch.Tensor]]:
         """Predict the most likely sequence of hidden states. Returns log-likelihood and sequences"""
         if algorithm not in DECODERS:
@@ -201,7 +198,7 @@ class BaseHMM(nn.Module,ABC):
         decoder = {'viterbi': self._viterbi,
                    'map': self._map}[algorithm]
         
-        X_valid = self.to_observations(X, lengths)
+        X_valid = self.to_observations(X,lengths)
         log_score = self._compute_log_likelihood(X_valid)
         decoded_path = decoder(X_valid)
 
@@ -210,16 +207,16 @@ class BaseHMM(nn.Module,ABC):
     def score(self, 
               X:torch.Tensor,
               by_sample:bool=True,
-              lengths:Optional[List[int]]=None) -> List[float]:
+              lengths:Optional[Tuple[int,...]]=None) -> List[float]:
         """Compute the joint log-likelihood"""
-        log_likelihoods = self._compute_log_likelihood(self.to_observations(X, lengths))
+        log_likelihoods = self._compute_log_likelihood(self.to_observations(X,lengths))
         res = log_likelihoods if by_sample else [sum(log_likelihoods)]
         return res
 
     def ic(self,
            X:torch.Tensor,
            by_sample:bool=True,
-           lengths:Optional[List[int]] = None,
+           lengths:Optional[Tuple[int,...]] = None,
            criterion:Literal['AIC','BIC','HQC'] = 'AIC') -> List[float]:
         """Calculates the information criteria for a given model."""
         log_likelihood = self.score(X,by_sample,lengths)
@@ -267,22 +264,15 @@ class BaseHMM(nn.Module,ABC):
     
     def _gamma(self, log_alpha:List[torch.Tensor], log_beta:List[torch.Tensor]) -> List[torch.Tensor]:
         """Compute the log-Gamma variable in Hidden Markov Model."""
-        gamma_vec = []
-        for alpha,beta in zip(log_alpha,log_beta):
-            gamma_vec.append(log_normalize(alpha+beta))
-
+        gamma_vec= [log_normalize(alpha+beta) for alpha,beta in zip(log_alpha,log_beta)]
         return gamma_vec
     
     def _xi(self, X:Observations, log_alpha:List[torch.Tensor], log_beta:List[torch.Tensor]) -> List[torch.Tensor]:
         """Compute the log-Xi variable in Hidden Markov Model."""
         xi_vec = []
-        for (seq_len,_,log_probs),alpha,beta in zip(sequence_generator(X),log_alpha,log_beta):
-            log_xi = torch.zeros(size=(seq_len-1,self.n_states,self.n_states),
-                                 dtype=torch.float64)
-            
-            for t in range(seq_len-1):
-                log_xi[t] = alpha[t].reshape(-1,1) + self.params.A + log_probs[t+1] + beta[t+1]
-
+        for (_,_,log_probs),alpha,beta in zip(sequence_generator(X),log_alpha,log_beta):
+            beta_prob = log_probs[1:] + beta[1:]
+            log_xi = alpha[:-1].unsqueeze(-1) + self.params.A.unsqueeze(0) + beta_prob.unsqueeze(-2)
             xi_vec.append(log_normalize(log_xi,(1,2)))
 
         return xi_vec
@@ -297,30 +287,19 @@ class BaseHMM(nn.Module,ABC):
     
     def _accum_pi(self, log_gamma:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the initial vector."""
-        log_pi = torch.zeros(size=(self.n_states,),
-                             dtype=torch.float64)
-
-        for gamma in log_gamma:
-            log_pi += gamma[0].exp()
-        
-        return log_normalize(log_pi.log(),0)
+        gamma_cat = torch.vstack([gamma[0] for gamma in log_gamma]).logsumexp(0)
+        return log_normalize(gamma_cat,0)
 
     def _accum_A(self, log_xi:List[torch.Tensor]) -> torch.Tensor:
         """Accumulate the statistics for the transition matrix."""
-        log_A = torch.zeros(size=(self.n_states,self.n_states),
-                             dtype=torch.float64)
-        
-        for xi in log_xi:
-            log_A += xi.exp().sum(dim=0)
-
-        return log_normalize(log_A.log())
+        xi_concat = torch.vstack(log_xi).logsumexp(0)
+        return log_normalize(xi_concat)
     
     def _estimate_model_params(self, X:Observations, theta:Optional[ContextualVariables]) -> nn.ParameterDict:
         """Compute the updated parameters for the model."""
         log_gamma,log_xi = self._compute_posteriors(X)
-        gamma = [torch.exp(gamma) for gamma in log_gamma]
 
-        new_params = self.estimate_emission_params(X.X,gamma,theta)
+        new_params = self.estimate_emission_params(X.X,log_gamma,theta)
         new_params.update(nn.ParameterDict({
             'pi':nn.Parameter(
                 self._accum_pi(log_gamma),

@@ -13,16 +13,16 @@ INFORM_CRITERIA = frozenset(('AIC', 'BIC', 'HQC'))
 class Observations:
     """Dataclass for a sequence of observations."""
     n_samples: int
-    X: List[torch.Tensor]
+    X: Tuple[torch.Tensor,...]
+    lengths: Tuple[int,...]
     log_probs: List[torch.Tensor]
-    lengths: List[int]
     n_sequences: int = field(default=1)
 
 @dataclass
 class ContextualVariables:
     """Dataclass for contextual variables."""
     n_context: int
-    X: List[torch.Tensor]
+    X: Tuple[torch.Tensor,...]
     time_dependent: bool = field(default=False)
 
 class SeedGenerator:

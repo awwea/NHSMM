@@ -53,8 +53,9 @@ class PoissonHMM(BaseHMM):
         })
 
     def estimate_emission_params(self,X,posterior,theta):
+        real_post = [torch.exp(gamma) for gamma in posterior]
         return nn.ParameterDict({
-            'rates':nn.Parameter(self._compute_rates(X,posterior,theta),requires_grad=False)
+            'rates':nn.Parameter(self._compute_rates(X,real_post,theta),requires_grad=False)
         })
 
     def _compute_rates(self,
@@ -65,15 +66,12 @@ class PoissonHMM(BaseHMM):
         new_rates = torch.zeros(size=(self.n_states, self.n_features), 
                                dtype=torch.float64)
         
-        denom = torch.zeros(size=(self.n_states,1),
-                            dtype=torch.float64)
-        
         for seq,gamma_val in zip(X,posterior):
             if theta is not None:
                 # TODO: matmul shapes are inconsistent 
                 raise NotImplementedError('Contextualized emissions not implemented for PoissonHMM')
             else:
                 new_rates += gamma_val.T @ seq.double()
-                denom += gamma_val.T.sum(dim=-1,keepdim=True)
 
+        denom = torch.cat(posterior,0).sum(0,keepdim=True).T
         return new_rates / denom
