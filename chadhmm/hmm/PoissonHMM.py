@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Literal
 import torch
 import torch.nn as nn
 from torch.distributions import Poisson, Independent
@@ -28,18 +28,20 @@ class PoissonHMM(BaseHMM):
     def __init__(self,
                  n_states:int,
                  n_features:int,
+                 transitions:Literal['ergodic','left-to-right'] = 'ergodic',
                  alpha:float = 1.0,
                  seed:Optional[int] = None):
         
-        super().__init__(n_states,n_features,alpha,seed)
+        self.n_features = n_features
+        super().__init__(n_states,transitions,alpha,seed)
 
     @property
     def dof(self):
-        return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1 + self.params.rates.numel()
+        return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1 + self._params.rates.numel()
     
     @property
     def pdf(self) -> Independent:
-        return Independent(Poisson(self.params.rates),1)
+        return Independent(Poisson(self._params.rates),1)
 
     def sample_emission_params(self,X=None):
         if X is not None:
@@ -53,25 +55,20 @@ class PoissonHMM(BaseHMM):
         })
 
     def estimate_emission_params(self,X,posterior,theta):
-        real_post = [torch.exp(gamma) for gamma in posterior]
         return nn.ParameterDict({
-            'rates':nn.Parameter(self._compute_rates(X,real_post,theta),requires_grad=False)
+            'rates':nn.Parameter(self._compute_rates(X,posterior,theta),requires_grad=False)
         })
 
     def _compute_rates(self,
-                       X:List[torch.Tensor],
-                       posterior:List[torch.Tensor],
+                       X:torch.Tensor,
+                       posterior:torch.Tensor,
                        theta:Optional[ContextualVariables]) -> torch.Tensor:
         """Compute the rates for each hidden state"""
-        new_rates = torch.zeros(size=(self.n_states, self.n_features), 
-                               dtype=torch.float64)
-        
-        for seq,gamma_val in zip(X,posterior):
-            if theta is not None:
-                # TODO: matmul shapes are inconsistent 
-                raise NotImplementedError('Contextualized emissions not implemented for PoissonHMM')
-            else:
-                new_rates += gamma_val.T @ seq.double()
+        if theta is not None:
+            # TODO: matmul shapes are inconsistent 
+            raise NotImplementedError('Contextualized emissions not implemented for PoissonHMM')
+        else:
+            new_rates = posterior @ X
+            new_rates /= posterior.sum(1,keepdim=True)
 
-        denom = torch.cat(posterior,0).sum(0,keepdim=True).T
-        return new_rates / denom
+        return new_rates

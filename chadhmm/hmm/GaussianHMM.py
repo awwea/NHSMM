@@ -1,4 +1,4 @@
-from typing import Optional, Literal, List
+from typing import Optional, Literal
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
@@ -36,24 +36,26 @@ class GaussianHMM(BaseHMM):
     def __init__(self,
                  n_states:int,
                  n_features:int,
+                 transitions:Literal['ergodic','left-to-right'] = 'ergodic',
                  k_means:bool = False,
                  alpha:float = 1.0,
                  covariance_type:COVAR_TYPES = 'full',
                  min_covar:float = 1e-3,
                  seed:Optional[int] = None):
 
-        self.min_covar = min_covar
+        self.n_features = n_features
         self.k_means = k_means
+        self.min_covar = min_covar
         self.covariance_type = covariance_type
-        BaseHMM.__init__(self,n_states,n_features,alpha,seed)
+        super().__init__(n_states,transitions,alpha,seed)
 
     @property
     def dof(self):
-        return self.n_states**2 - 1 + self.params.means.numel() + self.params.covs.numel()
+        return self.n_states**2 - 1 + self._params.means.numel() + self._params.covs.numel()
     
     @property
     def pdf(self) -> MultivariateNormal:
-        return MultivariateNormal(self.params.means,self.params.covs)
+        return MultivariateNormal(self._params.means,self._params.covs)
 
     def sample_emission_params(self,X=None):
         if X is not None:
@@ -72,10 +74,9 @@ class GaussianHMM(BaseHMM):
         })
 
     def estimate_emission_params(self,X,posterior,theta=None):
-        real_post = [torch.exp(gamma) for gamma in posterior]
         return nn.ParameterDict({
-            'means':nn.Parameter(self._compute_means(X,real_post,theta),requires_grad=False),
-            'covs':nn.Parameter(self._compute_covs(X,real_post,theta),requires_grad=False)
+            'means':nn.Parameter(self._compute_means(X,posterior,theta),requires_grad=False),
+            'covs':nn.Parameter(self._compute_covs(X,posterior,theta),requires_grad=False)
         })
 
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
@@ -86,42 +87,33 @@ class GaussianHMM(BaseHMM):
         return torch.from_numpy(k_means_alg.cluster_centers_).reshape(self.n_states,self.n_features)
 
     def _compute_means(self,
-                       X:List[torch.Tensor],
-                       posterior:List[torch.Tensor],
+                       X:torch.Tensor,
+                       posterior:torch.Tensor,
                        theta:Optional[ContextualVariables]=None) -> torch.Tensor:
         """Compute the means for each hidden state"""
-        new_mean = torch.zeros(size=(self.n_states,self.n_features), 
-                               dtype=torch.float64)
-        
-        for seq,gamma_val in zip(X,posterior):
-            if theta is not None:
-                # TODO: matmul shapes are inconsistent 
-                raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
-            else:
-                new_mean += gamma_val.T @ seq
+        if theta is not None:
+            # TODO: matmul shapes are inconsistent 
+            raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
+        else:
+            new_mean = posterior @ X
+            new_mean /= posterior.sum(-1,keepdim=True)
 
-        denom = torch.cat(posterior,0).sum(0,keepdim=True).T
-        return new_mean / denom
+        return new_mean
     
     def _compute_covs(self, 
-                      X:List[torch.Tensor],
-                      posterior:List[torch.Tensor],
+                      X:torch.Tensor,
+                      posterior:torch.Tensor,
                       theta:Optional[ContextualVariables]=None) -> torch.Tensor:
         """Compute the covariances for each component."""
-        new_covs = torch.zeros(size=(self.n_states,self.n_features, self.n_features), 
-                               dtype=torch.float64)
-        
-        for seq,gamma_val in zip(X,posterior):
-            if theta is not None:
-                # TODO: matmul shapes are inconsistent 
-                raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
-            else:
-                # TODO: Uses old mean value of normal distribution
-                gamma_expanded = gamma_val.T.unsqueeze(-1)
-                diff = seq.expand(self.n_states,-1,-1) - self.params.means.unsqueeze(1)
-                new_covs += torch.transpose(gamma_expanded * diff,1,2) @ diff
+        if theta is not None:
+            # TODO: matmul shapes are inconsistent 
+            raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
+        else:
+            # TODO: Uses old mean value of normal distribution, correct?
+            posterior_adj = posterior.unsqueeze(-1)
+            diff = X.expand(self.n_states,-1,-1) - self._params.means.unsqueeze(-2) # shape (N,T,F)
+            new_covs = torch.transpose(posterior_adj * diff,-1,-2) @ diff # shape (N,F,F)
+            new_covs /= posterior_adj.sum(-2,keepdim=True) # shape (N,1,1)
 
-        new_covs /= torch.cat(posterior,0).sum(0,keepdim=True).T.unsqueeze(-1)
         new_covs += self.min_covar * torch.eye(self.n_features)
-
         return new_covs

@@ -5,7 +5,7 @@ from torch.distributions import MultivariateNormal,MixtureSameFamily,Categorical
 from sklearn.cluster import KMeans # type: ignore
 
 from .BaseHSMM import BaseHSMM # type: ignore
-from ..utils import ContextualVariables, log_normalize, sample_logits # type: ignore
+from ..utils import ContextualVariables, log_normalize, sample_probs # type: ignore
 
 
 class GaussianMixtureHSMM(BaseHSMM):
@@ -66,7 +66,7 @@ class GaussianMixtureHSMM(BaseHSMM):
                                  MultivariateNormal(self.params.means,self.params.covs))
     
     def sample_emission_params(self,X=None):
-        weights = sample_logits(self.alpha,(self.n_states,self.n_components),False)
+        weights = torch.log(sample_probs(self.alpha,(self.n_states,self.n_components)))
         if X is not None:
             means = self._sample_kmeans(X) if self.k_means else X.mean(dim=0,keepdim=True).expand(self.n_states,self.n_components,-1).clone()
             centered_data = X - X.mean(dim=0)

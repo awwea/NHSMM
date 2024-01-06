@@ -49,6 +49,7 @@ Please refer to the [docs](https://github.com/GarroshIcecream/ChadHMM//tree/mast
   - [ ] Time dependent context to be implemented
   - [ ] Contextual Variables for covariances using GEM (Genereliazed Expectation Maximization algo)
   - [ ] Contextual variables for Categorical emissions
+- [x] Support different types of Transition Matrices - semi, left-to-right and Ergodic
 - [ ] Implement different types of covariance matrices
   - [ ] Connect that into degrees of freedom
 - [ ] Improve the docs with examples

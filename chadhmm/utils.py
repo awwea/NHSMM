@@ -1,21 +1,21 @@
-from typing import Generator, Tuple, Optional, List, Generator, Union
+from typing import Generator, Tuple, Optional, List, Generator, Union, Literal
 from dataclasses import dataclass, field
 
 import torch
 import matplotlib.pyplot as plt # type: ignore
 
-MAT_TYPES = frozenset(('Transition','Emission','Duration','Weights','Matrix','Tensor','Initial','Vector'))
 DECODERS = frozenset(('viterbi', 'map'))
 INFORM_CRITERIA = frozenset(('AIC', 'BIC', 'HQC'))
+SUPPORTED_A = frozenset(('semi','left-to-right','ergodic'))
 
 
 @dataclass
 class Observations:
     """Dataclass for a sequence of observations."""
-    n_samples: int
-    X: Tuple[torch.Tensor,...]
-    lengths: Tuple[int,...]
-    log_probs: List[torch.Tensor]
+    data: torch.Tensor
+    log_probs: torch.Tensor
+    start_indices: torch.Tensor
+    lengths: List[int]
     n_sequences: int = field(default=1)
 
 @dataclass
@@ -93,12 +93,12 @@ class ConvergenceHandler:
                             verbose={self.verbose})
                 """
     
-    def push_pull(self, new_score:float, iter:int, rank:int) -> bool:
+    def push_pull(self, new_score:torch.Tensor, iter:int, rank:int) -> bool:
         """Push a new score and check for convergence."""
         self.push(new_score, iter, rank)
         return self.converged(iter, rank)
         
-    def push(self, new_score:float, iter:int, rank:int):
+    def push(self, new_score:torch.Tensor, iter:int, rank:int):
         """Update the iteration count."""
         self.score[iter,rank] = new_score
         self.delta[iter,rank] = new_score - self.score[iter-1,rank]
@@ -109,7 +109,7 @@ class ConvergenceHandler:
 
         if conv_lag < 0:
             self.is_converged = False
-        elif all(self.delta[conv_lag:iter, rank] < self.tol):
+        elif torch.all(self.delta[conv_lag:iter, rank] < self.tol):
             self.is_converged = True
         else:
             self.is_converged = False
@@ -118,14 +118,16 @@ class ConvergenceHandler:
             score = self.score[iter,rank].item()
             delta = self.delta[iter,rank].item()
 
-            if iter == 0:
+            if self.is_converged:
+                print(f'Model converged after {iter} iterations with log-likelihood: {score:.2f}')
+            elif iter == 0:
                 print(f"Run {rank+1} | Initialization | Score: {score:.2f}")
             else:
                 print(f"Run {rank+1} | " +
-                    f"Iteration: {iter} | " + 
-                    f"Score: {score:.2f} | " +
-                    f"Delta: {delta:.2f} | " +
-                    f"Converged = {self.is_converged}"
+                      f"Iteration: {iter} | " + 
+                      f"Score: {score:.2f} | " +
+                      f"Delta: {delta:.2f} | " +
+                      f"Converged = {self.is_converged}"
                     )
 
         return self.is_converged
@@ -150,50 +152,55 @@ class ConvergenceHandler:
         ax.legend(loc='lower right')
         plt.show()
 
-def validate_logits(matrix:torch.Tensor, name:str) -> torch.Tensor:    
-
-    if torch.any(torch.isnan(matrix)):
-        raise ValueError("Matrix must not contain NaNs")
-    elif torch.any(0 <= matrix):
-        raise ValueError("Logits must be <= 0")
-    
-    if name in ('Transition','Emission','Duration','Weights','Matrix'):
-        assert matrix.ndim == 2, ValueError(f'Probability Matrix of type {name} must be 2-dimensional')
-        if name == 'Transition':
-            n_rows, n_cols = matrix.shape
-            assert n_cols == n_rows, ValueError(f'For Transition Matrix specify rectangular probability matrix not {n_rows}x{n_cols}') 
-    elif name in ('Initial','Vector'):
-        assert matrix.ndim == 1, ValueError(f'Probability Vector of type {name} must be 1-dimensional')
-    elif name == 'Tensor':
-        assert matrix.ndim > 2, ValueError(f'Probability Tensor of type {name} must have more than 2-dimensions')
-    else:
-        raise NotImplementedError(f'This matrix type is not supported, please use one of {MAT_TYPES}')
-    
-    if not torch.all(matrix.logsumexp(-1) < 1e-3):
-        raise ValueError('Probabilities alongside last dimension must sum up to 1')
-    else:
-        return matrix
-
-def sample_logits(prior: float, target_size: Union[Tuple[int,...],torch.Size], semi: bool = False) -> torch.Tensor:
+def sample_probs(prior:float, 
+                 target_size:Union[Tuple[int,...],torch.Size]) -> torch.Tensor:
     """Initialize a matrix of probabilities"""
     alphas = torch.full(size=target_size,
                         fill_value=prior,
                         dtype=torch.float64)
     
     probs = torch.distributions.Dirichlet(alphas).sample()
-    if semi:
-        # Usable only for 2D
-        probs.fill_diagonal_(0)
-        probs /= probs.sum(dim=-1, keepdim=True)
+    return probs
 
-    return probs.log()
+def sample_A(prior:float, 
+             n_states:int,
+             A_type:Literal['semi','left-to-right','ergodic']='ergodic') -> torch.Tensor:
+    """Initialize Transition Matrix from Dirichlet distribution, prior of 1 refers to Uniform sampling"""
+    if A_type not in SUPPORTED_A:
+        raise NotImplementedError(f'This type of Transition matrix is not supported {A_type} please use {SUPPORTED_A}')
+    
+    probs = sample_probs(prior, (n_states,n_states))
+    if A_type == 'ergodic':
+        pass
+    elif A_type == 'semi':
+        probs.fill_diagonal_(0)
+        probs /= probs.sum(dim=-1,keepdim=True)
+    elif A_type == 'left-to-right':
+        probs = torch.triu(probs)
+        probs /= probs.sum(dim=-1,keepdim=True)
+    else:
+        raise NotImplementedError(f'This type of Transition matrix is not supported: {A_type}')
+
+    return probs
+
+def is_valid_A(logits:torch.Tensor,
+               A_type:Literal['semi','left-to-right','ergodic']='ergodic') -> bool:
+    """Check the constraints on the Transition Matrix given its type"""
+    if A_type not in SUPPORTED_A:
+        raise NotImplementedError(f'This type of Transition matrix is not supported {A_type} please use {SUPPORTED_A}')
+    
+    return {
+        'semi': bool(torch.all(logits.exp().diagonal() == 0)),
+        'ergodic': bool(torch.all(logits.exp() > 0.0)),
+        'left-to-right': bool(torch.all(logits.exp() > 0.0))
+    }[A_type]
 
 def log_normalize(matrix:torch.Tensor, dim:Union[int,Tuple[int,...]]=1) -> torch.Tensor:
     """Normalize a posterior probability matrix"""
     return matrix - matrix.logsumexp(dim,True)
 
 def sequence_generator(X:Observations) -> Generator[Tuple[int,torch.Tensor,torch.Tensor], None, None]:
-    for X_len,seq,log_probs in zip(X.lengths,X.X,X.log_probs):
+    for X_len,seq,log_probs in zip(X.lengths,X.data,X.log_probs):
         yield X_len, seq, log_probs       
     
 def validate_lambdas(lambdas: torch.Tensor, n_states: int, n_features: int) -> torch.Tensor:

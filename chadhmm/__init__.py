@@ -8,7 +8,7 @@ But seriously this package needs you to help me make it better. I'm not a profes
 If you have any suggestions, please let me know. I'm open to all ideas.
 """
 
-__all__ = ['CategoricalHMM', 
+__all__ = ['MultinomialHMM', 
            'CategoricalHSMM', 
            'GaussianHMM',
            'GaussianHSMM',
@@ -18,5 +18,5 @@ __all__ = ['CategoricalHMM',
            'GaussianMixtureHSMM']
 
 # Import HMM objects
-from .hmm import CategoricalHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
+from .hmm import MultinomialHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
 from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM

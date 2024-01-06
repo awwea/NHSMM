@@ -1,11 +1,11 @@
-from typing import Optional, Literal, List
+from typing import Optional, Literal
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal,MixtureSameFamily,Categorical
 from sklearn.cluster import KMeans # type: ignore
 
 from .BaseHMM import BaseHMM # type: ignore
-from ..utils import ContextualVariables, log_normalize, sample_logits # type: ignore
+from ..utils import ContextualVariables, log_normalize, sample_probs # type: ignore
 
 
 class GaussianMixtureHMM(BaseHMM):
@@ -39,30 +39,32 @@ class GaussianMixtureHMM(BaseHMM):
                  n_states:int,
                  n_features:int,
                  n_components:int = 1,
+                 transitions:Literal['ergodic','left-to-right'] = 'ergodic',
                  k_means:bool = False,
                  alpha:float = 1.0,
                  covariance_type:COVAR_TYPES = 'full',
                  min_covar:float = 1e-3,
                  seed:Optional[int] = None):
 
-        self.min_covar = min_covar
-        self.k_means = k_means
-        self.covariance_type = covariance_type
+        self.n_features = n_features
         self.n_components = n_components
-        BaseHMM.__init__(self,n_states,n_features,alpha,seed)
+        self.min_covar = min_covar
+        self.covariance_type = covariance_type
+        self.k_means = k_means
+        super().__init__(n_states,transitions,alpha,seed)
         
     @property
     def dof(self):
-        return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self.params.means.numel() + self.params.covs.numel()
+        return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self._params.means.numel() + self._params.covs.numel()
     
     @property
     def pdf(self) -> MixtureSameFamily:
         """Return the emission distribution for Gaussian Mixture Distribution."""
-        return MixtureSameFamily(Categorical(logits=self.params.weights),
-                                 MultivariateNormal(self.params.means,self.params.covs))
+        return MixtureSameFamily(Categorical(logits=self._params.weights),
+                                 MultivariateNormal(self._params.means,self._params.covs))
     
     def sample_emission_params(self,X=None):
-        weights = sample_logits(self.alpha,(self.n_states,self.n_components),False)
+        weights = torch.log(sample_probs(self.alpha,(self.n_states,self.n_components)))
         if X is not None:
             means = self._sample_kmeans(X) if self.k_means else X.mean(dim=0,keepdim=True).expand(self.n_states,self.n_components,-1).clone()
             centered_data = X - X.mean(dim=0)
@@ -81,13 +83,13 @@ class GaussianMixtureHMM(BaseHMM):
         })
     
     def estimate_emission_params(self,X,posterior,theta):
-        resp_vec = self._compute_responsibilities(X)
-        posterior_vec = [torch.exp(resp + post.unsqueeze(-1)) for resp,post in zip(resp_vec,posterior)]
+        responsibilities = self._compute_log_responsibilities(X).exp()
+        posterior_resp = responsibilities.permute(1,2,0) * posterior.unsqueeze(-2)
 
         return nn.ParameterDict({
-            'weights':nn.Parameter(self._compute_weights(posterior_vec),requires_grad=False),
-            'means':nn.Parameter(self._compute_means(X,posterior_vec,theta),requires_grad=False),
-            'covs':nn.Parameter(self._compute_covs(X,posterior_vec,theta),requires_grad=False)
+            'weights':nn.Parameter(log_normalize(torch.log(posterior_resp.sum(-1))),requires_grad=False),
+            'means':nn.Parameter(self._compute_means(X,posterior_resp,theta),requires_grad=False),
+            'covs':nn.Parameter(self._compute_covs(X,posterior_resp,theta),requires_grad=False)
         })
     
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
@@ -97,61 +99,40 @@ class GaussianMixtureHMM(BaseHMM):
                              n_init="auto").fit(X)
         return torch.from_numpy(k_means_alg.cluster_centers_).reshape(self.n_states,self.n_components,self.n_features)
     
-    def _compute_responsibilities(self, X:List[torch.Tensor]) -> List[torch.Tensor]:
+    def _compute_log_responsibilities(self, X:torch.Tensor) -> torch.Tensor:
         """Compute the responsibilities for each component."""
-        resp_vec = []
-        for seq in X:
-            n_observations = seq.size(dim=0)
-            log_responsibilities = torch.zeros(size=(n_observations,self.n_states,self.n_components), 
-                                               dtype=torch.float64)
-
-            for t in range(n_observations):
-                log_responsibilities[t] = log_normalize(self.params.weights + self.pdf.component_distribution.log_prob(seq[t]))
-
-            resp_vec.append(log_responsibilities)
-        
-        return resp_vec
-    
-    def _compute_weights(self, posterior:List[torch.Tensor]) -> torch.Tensor:
-        post_concat = torch.cat(posterior).sum(0).log()
-        return log_normalize(post_concat)
+        X_expanded = X.unsqueeze(-2).unsqueeze(-2)
+        component_log_probs = self.pdf.component_distribution.log_prob(X_expanded)
+        log_responsibilities = log_normalize(self._params.weights.unsqueeze(0) + component_log_probs)
+        return log_responsibilities
     
     def _compute_means(self,
-                       X:List[torch.Tensor], 
-                       posterior:List[torch.Tensor],
+                       X:torch.Tensor, 
+                       posterior:torch.Tensor,
                        theta:Optional[ContextualVariables]=None) -> torch.Tensor:
         """Compute the means for each hidden state"""
-        new_mean = torch.zeros(size=(self.n_states,self.n_components,self.n_features), 
-                               dtype=torch.float64)
-        
-        for seq,resp in zip(X,posterior):
-            if theta is not None:
-                # TODO: matmul shapes are inconsistent
-                raise NotImplementedError('Contextualized emissions not implemented for GaussianMixtureHMM')
-            else:
-                new_mean += resp.permute(1,2,0) @ seq
-        
-        new_mean /= torch.cat(posterior).sum(0,keepdim=True).permute(1,2,0)
+        if theta is not None:
+            # TODO: matmul shapes are inconsistent
+            raise NotImplementedError('Contextualized emissions not implemented for GaussianMixtureHMM')
+        else:
+            new_mean = posterior @ X
+            new_mean /= posterior.sum(-1,keepdim=True)
+
         return new_mean
     
     def _compute_covs(self,
-                      X:List[torch.Tensor],
-                      posterior:List[torch.Tensor],
+                      X:torch.Tensor,
+                      posterior:torch.Tensor,
                       theta:Optional[ContextualVariables]=None) -> torch.Tensor:
         """Compute the covariances for each component."""
-        new_covs = torch.zeros(size=(self.n_states,self.n_components,self.n_features,self.n_features), 
-                               dtype=torch.float64)
-        
-        for seq,resp in zip(X,posterior):
-            if theta is not None:
-                # TODO: matmul shapes are inconsistent 
-                raise NotImplementedError('Contextualized emissions not implemented for GaussianMixtureHMM')
-            else:
-                resp_expanded = resp.permute(1,2,0).unsqueeze(-1)
-                diff = seq.unsqueeze(0).expand(self.n_states,self.n_components,-1,-1) - self.params.means.unsqueeze(2)
-                new_covs += torch.transpose(diff * resp_expanded,2,3) @ diff
-
-        new_covs /= torch.cat(posterior).sum(0,keepdim=True).permute(1,2,0).unsqueeze(-1)
+        if theta is not None:
+            # TODO: matmul shapes are inconsistent 
+            raise NotImplementedError('Contextualized emissions not implemented for GaussianMixtureHMM')
+        else:
+            posterior_adj = posterior.unsqueeze(-1)
+            diff = X.unsqueeze(0).expand(self.n_states,self.n_components,-1,-1) - self._params.means.unsqueeze(-2)
+            new_covs = torch.transpose(diff * posterior_adj,-1,-2) @ diff
+            new_covs /= posterior_adj.sum(-2,keepdim=True)
+       
         new_covs += self.min_covar * torch.eye(self.n_features)
-        
         return new_covs

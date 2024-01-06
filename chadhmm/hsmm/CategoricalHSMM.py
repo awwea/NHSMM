@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.distributions import Categorical
 
 from .BaseHSMM import BaseHSMM # type: ignore
-from ..utils import ContextualVariables, log_normalize, sample_logits
+from ..utils import ContextualVariables, log_normalize, sample_probs
 
 
 class CategoricalHSMM(BaseHSMM):
@@ -58,7 +58,7 @@ class CategoricalHSMM(BaseHSMM):
             emission_freqs = torch.bincount(X) / X.shape[0]
             emission_matrix = torch.log(emission_freqs.expand(self.n_states,-1))
         else:
-            emission_matrix = sample_logits(self.alpha,(self.n_states,self.n_features),False)
+            emission_matrix = torch.log(sample_probs(self.alpha,(self.n_states,self.n_features)))
             
         return nn.ParameterDict({
             'B':nn.Parameter(emission_matrix,requires_grad=False)
@@ -77,6 +77,7 @@ class CategoricalHSMM(BaseHSMM):
                 #TODO: Implement contextualized emissions
                 raise NotImplementedError('Contextualized emissions not implemented for CategoricalEmissions')
             else:
+                # TODO: Seq = (T,F-can be any number) and gamma is (T,N)
                 masks = seq.view(1,-1) == self.pdf.enumerate_support(expand=False)
                 for i,mask in enumerate(masks):
                     emission_mat[:,i] += gamma_val[mask].sum(dim=0)
