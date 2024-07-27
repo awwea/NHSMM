@@ -1,6 +1,5 @@
 from typing import Optional
 import torch
-import torch.nn as nn
 from torch.distributions import Multinomial # type: ignore
 
 from chadhmm.hmm.BaseHMM import BaseHMM

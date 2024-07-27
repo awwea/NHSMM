@@ -1,9 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Sequence, List, Tuple, Literal, Any
+from typing import Optional, List, Tuple, Literal, Any
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
-from torch.nested import nested_tensor
 
 from chadhmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler # type: ignore
 
