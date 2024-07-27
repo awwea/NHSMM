@@ -4,8 +4,8 @@ import torch.nn as nn
 from torch.distributions import MultivariateNormal
 from sklearn.cluster import KMeans # type: ignore
 
-from .BaseHSMM import BaseHSMM # type: ignore
-from ..utils import ContextualVariables # type: ignore
+from chadhmm.hsmm.BaseHSMM import BaseHSMM
+from chadhmm.utilities import utils
 
 
 class GaussianHSMM(BaseHSMM):
@@ -93,7 +93,7 @@ class GaussianHSMM(BaseHSMM):
     def _compute_means(self,
                        X:List[torch.Tensor],
                        posterior:List[torch.Tensor],
-                       theta:Optional[ContextualVariables]=None) -> torch.Tensor:
+                       theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
         """Compute the means for each hidden state"""
         new_mean = torch.zeros(size=(self.n_states, self.n_features), 
                                dtype=torch.float64)
@@ -114,7 +114,7 @@ class GaussianHSMM(BaseHSMM):
     def _compute_covs(self, 
                       X:List[torch.Tensor],
                       posterior:List[torch.Tensor],
-                      theta:Optional[ContextualVariables]=None) -> torch.Tensor:
+                      theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
         """Compute the covariances for each component."""
         new_covs = torch.zeros(size=(self.n_states,self.n_features, self.n_features), 
                                dtype=torch.float64)

@@ -8,15 +8,22 @@ But seriously this package needs you to help me make it better. I'm not a profes
 If you have any suggestions, please let me know. I'm open to all ideas.
 """
 
-__all__ = ['MultinomialHMM', 
-           'CategoricalHSMM', 
-           'GaussianHMM',
-           'GaussianHSMM',
-           'PoissonHMM',
-           'PoissonHSMM',
-           'GaussianMixtureHMM',
-           'GaussianMixtureHSMM']
-
-# Import HMM objects
 from .hmm import MultinomialHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
 from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM
+from .utilities import utils, constraints, SeedGenerator, ConvergenceHandler
+
+
+__all__ = [
+    'MultinomialHMM', 
+    'CategoricalHSMM', 
+    'GaussianHMM',
+    'GaussianHSMM',
+    'PoissonHMM',
+    'PoissonHSMM',
+    'GaussianMixtureHMM',
+    'GaussianMixtureHSMM',
+    'utils',
+    'constraints',
+    'SeedGenerator',
+    'ConvergenceHandler'
+]

@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical
 
-from .BaseHSMM import BaseHSMM # type: ignore
-from ..utils import ContextualVariables, log_normalize, sample_probs
+from chadhmm.hsmm.BaseHSMM import BaseHSMM
+from chadhmm.utilities import utils, constraints
 
 
 class CategoricalHSMM(BaseHSMM):
@@ -58,7 +58,7 @@ class CategoricalHSMM(BaseHSMM):
             emission_freqs = torch.bincount(X) / X.shape[0]
             emission_matrix = torch.log(emission_freqs.expand(self.n_states,-1))
         else:
-            emission_matrix = torch.log(sample_probs(self.alpha,(self.n_states,self.n_features)))
+            emission_matrix = torch.log(constraints.sample_probs(self.alpha,(self.n_states,self.n_features)))
             
         return nn.ParameterDict({
             'B':nn.Parameter(emission_matrix,requires_grad=False)
@@ -67,7 +67,7 @@ class CategoricalHSMM(BaseHSMM):
     def _compute_emprobs(self,
                         X:List[torch.Tensor],
                         posterior:List[torch.Tensor],
-                        theta:Optional[ContextualVariables]=None) -> torch.Tensor: 
+                        theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor: 
         """Compute the emission probabilities for each hidden state."""
         emission_mat = torch.zeros(size=(self.n_states,self.n_features),
                                    dtype=torch.float64)
@@ -82,5 +82,5 @@ class CategoricalHSMM(BaseHSMM):
                 for i,mask in enumerate(masks):
                     emission_mat[:,i] += gamma_val[mask].sum(dim=0)
 
-        return log_normalize(emission_mat.log(),1)
+        return constraints.log_normalize(emission_mat.log(),1)
 

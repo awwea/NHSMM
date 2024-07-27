@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 from torch.distributions import Poisson, Independent
 
-from .BaseHSMM import BaseHSMM # type: ignore
-from ..utils import ContextualVariables
+from chadhmm.hsmm.BaseHSMM import BaseHSMM
+from chadhmm.utilities import utils
 
 class PoissonHSMM(BaseHSMM):
     """
@@ -60,7 +60,7 @@ class PoissonHSMM(BaseHSMM):
     def _compute_rates(self,
                        X:List[torch.Tensor],
                        posterior:List[torch.Tensor],
-                       theta:Optional[ContextualVariables]) -> torch.Tensor:
+                       theta:Optional[utils.ContextualVariables]) -> torch.Tensor:
         """Compute the rates for each hidden state"""
         new_rates = torch.zeros(size=(self.n_states, self.n_features), 
                                dtype=torch.float64)

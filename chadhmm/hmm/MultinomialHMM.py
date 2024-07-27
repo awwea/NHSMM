@@ -1,10 +1,10 @@
-from typing import Optional, Literal
+from typing import Optional
 import torch
 import torch.nn as nn
 from torch.distributions import Multinomial # type: ignore
 
-from .BaseHMM import BaseHMM # type: ignore
-from ..utils import ContextualVariables, log_normalize, sample_probs # type: ignore
+from chadhmm.hmm.BaseHMM import BaseHMM
+from chadhmm.utilities import utils, constraints
 
 
 class MultinomialHMM(BaseHMM):
@@ -47,7 +47,7 @@ class MultinomialHMM(BaseHMM):
                  n_states:int,
                  n_features:int,
                  n_trials:int = 1,
-                 transitions:Literal['ergodic','left-to-right'] = 'ergodic',
+                 transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
                  alpha:float = 1.0,
                  seed:Optional[int] = None):
         
@@ -57,44 +57,31 @@ class MultinomialHMM(BaseHMM):
 
     @property
     def dof(self):
-        return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1
-    
-    @property
-    def pdf(self) -> Multinomial:
-        return Multinomial(total_count=self.n_trials,logits=self._params.B)
+        return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1 
 
-    def estimate_emission_params(self,X,posterior,theta=None):
-        return nn.ParameterDict({
-            'B':nn.Parameter(
-                torch.log(self._compute_B(X,posterior,theta)),
-                requires_grad=False
-            )
-        })
-
-    def sample_emission_params(self,X=None):
+    def sample_emission_pdf(self,X=None):
         if X is not None:
             emission_freqs = torch.bincount(X) / X.shape[0]
             emission_matrix = torch.log(emission_freqs.expand(self.n_states,-1))
         else:
-            emission_matrix = torch.log(sample_probs(self.alpha,(self.n_states,self.n_features)))
+            emission_matrix = torch.log(constraints.sample_probs(self.alpha,(self.n_states,self.n_features)))
 
-        return nn.ParameterDict({
-            'B':nn.Parameter(
-                emission_matrix,
-                requires_grad=False
-            )
-        })
+        return Multinomial(total_count=self.n_trials,logits=emission_matrix)
+
+    def _estimate_emission_pdf(self,X,posterior,theta=None):
+        new_B = self._compute_B(X,posterior,theta)
+        return Multinomial(total_count=self.n_trials,logits=new_B)
 
     def _compute_B(self,
                    X:torch.Tensor,
                    posterior:torch.Tensor,
-                   theta:Optional[ContextualVariables]=None) -> torch.Tensor: 
+                   theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor: 
         """Compute the emission probabilities for each hidden state."""
         if theta is not None:
             #TODO: Implement contextualized emissions
             raise NotImplementedError('Contextualized emissions not implemented for CategoricalEmissions')
-        else:  
-            new_B = posterior @ X
-            new_B /= posterior.sum(1,keepdim=True)
+        else:
+            new_B = posterior.T @ X
+            new_B /= posterior.T.sum(1,keepdim=True)
 
         return new_B

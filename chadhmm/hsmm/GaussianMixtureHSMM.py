@@ -4,8 +4,8 @@ import torch.nn as nn
 from torch.distributions import MultivariateNormal,MixtureSameFamily,Categorical
 from sklearn.cluster import KMeans # type: ignore
 
-from .BaseHSMM import BaseHSMM # type: ignore
-from ..utils import ContextualVariables, log_normalize, sample_probs # type: ignore
+from chadhmm.hsmm.BaseHSMM import BaseHSMM
+from chadhmm.utilities import utils, constraints
 
 
 class GaussianMixtureHSMM(BaseHSMM):
@@ -66,7 +66,7 @@ class GaussianMixtureHSMM(BaseHSMM):
                                  MultivariateNormal(self.params.means,self.params.covs))
     
     def sample_emission_params(self,X=None):
-        weights = torch.log(sample_probs(self.alpha,(self.n_states,self.n_components)))
+        weights = torch.log(constraints.sample_probs(self.alpha,(self.n_states,self.n_components)))
         if X is not None:
             means = self._sample_kmeans(X) if self.k_means else X.mean(dim=0,keepdim=True).expand(self.n_states,self.n_components,-1).clone()
             centered_data = X - X.mean(dim=0)
@@ -112,7 +112,7 @@ class GaussianMixtureHSMM(BaseHSMM):
                                                dtype=torch.float64)
 
             for t in range(n_observations):
-                log_responsibilities[...,t] = log_normalize(self.params.weights + self.pdf.component_distribution.log_prob(seq[t]),1)
+                log_responsibilities[...,t] = constraints.log_normalize(self.params.weights + self.pdf.component_distribution.log_prob(seq[t]),1)
 
             resp_vec.append(log_responsibilities)
         
@@ -125,12 +125,12 @@ class GaussianMixtureHSMM(BaseHSMM):
         for p in posterior:
             log_weights += p.exp().sum(-1)
         
-        return log_normalize(log_weights.log(),1)
+        return constraints.log_normalize(log_weights.log(),1)
     
     def _compute_means(self,
                        X:List[torch.Tensor], 
                        posterior:List[torch.Tensor],
-                       theta:Optional[ContextualVariables]=None) -> torch.Tensor:
+                       theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
         """Compute the means for each hidden state"""
         new_mean = torch.zeros(size=(self.n_states,self.n_components,self.n_features), 
                                dtype=torch.float64)
@@ -151,7 +151,7 @@ class GaussianMixtureHSMM(BaseHSMM):
     def _compute_covs(self,
                       X:List[torch.Tensor],
                       posterior:List[torch.Tensor],
-                      theta:Optional[ContextualVariables]=None) -> torch.Tensor:
+                      theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
         """Compute the covariances for each component."""
         new_covs = torch.zeros(size=(self.n_states,self.n_components,self.n_features,self.n_features), 
                                dtype=torch.float64)
