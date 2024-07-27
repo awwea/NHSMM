@@ -28,10 +28,10 @@ py_versions = '3.5 3.6 3.7 3.8 3.9 3.10 3.11'.split()
 statuses = ['1 - Planning', '2 - Pre-Alpha', '3 - Alpha', '4 - Beta',
             '5 - Production/Stable', '6 - Mature', '7 - Inactive']
 
-cfg_keys = 'description keywords author author_email lib_name license version url language'.split()
+cfg_keys = 'description keywords author author_email license version url language'.split()
 setup_cfg = {o: cfg[o] for o in cfg_keys}
 
-with open(cfg.get('requirements','')) as f:
+with open('requirements.txt',) as f:
     requirements = f.readlines()
 
 setuptools.setup(
