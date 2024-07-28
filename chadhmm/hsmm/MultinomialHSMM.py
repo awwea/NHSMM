@@ -12,25 +12,30 @@ class MultinomialHSMM(BaseHSMM):
     ----------
     Hidden semi-Markov model with categorical (discrete) emissions. This model is an extension of classical HMMs where the duration of each state is modeled by a geometric distribution.
     Duration in each state is modeled by a Categorical distribution with a fixed maximum duration.
+        
+    If n_trials = 1 and and n_features = 2 
+        Bernoulli distribution
+    If n_trials = 1 and and n_features > 2
+        Categorical distribution
+    If n_trials > 1 and and n_features = 2
+        Binomial distribution
+    If n_trials > 1 and and n_features > 2
+        Multionomial distribution
 
     Parameters:
     ----------
     n_states (int):
         Number of hidden states in the model.
-    n_features (int): 
+    n_features (int):
         Number of emissions in the model.
-    seed (int):
-        Random seed for reproducibility.
     max_duration (int):
         Maximum duration of each state.
-    params_init (bool):
-        Whether to initialize the model parameters prior to fitting.
-    init_dist (SAMPLING_DISTRIBUTIONS):
-        Distribution to use for initializing the model parameters.
+    n_trials (int):
+        Number of trials to estimate the emission distribution.
     alpha (float):
         Dirichlet concentration parameter for the prior over initial state probabilities and transition probabilities.
-    verbose (bool):
-        Whether to print progress logs during fitting.
+    seed (int):
+        Random seed for reproducibility.
     """
     def __init__(self,
                  n_states:int,
@@ -58,7 +63,7 @@ class MultinomialHSMM(BaseHSMM):
         return Multinomial(total_count=self.n_trials,logits=emission_matrix)
 
     def _estimate_emission_pdf(self,X,posterior,theta=None):
-        new_B = self._compute_B(X,posterior,theta)
+        new_B = torch.log(self._compute_B(X,posterior,theta))
         return Multinomial(total_count=self.n_trials,logits=new_B)
 
     def _compute_B(self,
@@ -70,7 +75,7 @@ class MultinomialHSMM(BaseHSMM):
             #TODO: Implement contextualized emissions
             raise NotImplementedError('Contextualized emissions not implemented for CategoricalEmissions')
         else:  
-            new_B = posterior @ X
-            new_B /= posterior.sum(1,keepdim=True)
+            new_B = posterior.T @ X
+            new_B /= posterior.T.sum(1,keepdim=True)
 
         return new_B

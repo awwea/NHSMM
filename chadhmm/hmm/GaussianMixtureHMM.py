@@ -92,7 +92,7 @@ class GaussianMixtureHMM(BaseHMM):
 
         return MixtureSameFamily(
             Categorical(logits=new_weights),
-            MultivariateNormal(new_means,new_covs)
+            MultivariateNormal(loc=new_means,covariance_matrix=new_covs)
         )
     
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:

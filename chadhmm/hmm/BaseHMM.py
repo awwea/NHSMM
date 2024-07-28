@@ -276,18 +276,18 @@ class BaseHMM(nn.Module,ABC):
 
     def _compute_posteriors(self, X:utils.Observations) -> Tuple[List[torch.Tensor],...]:
         """Execute the forward-backward algorithm and compute the log-Gamma and log-Xi variables."""
+        gamma_vec:List[torch.Tensor] = []
+        xi_vec:List[torch.Tensor] = []
+        
         log_alpha_vec = self._forward(X)
         log_beta_vec = self._backward(X)
 
-        gamma_vec:List[torch.Tensor] = []
-        for log_alpha,log_beta in zip(log_alpha_vec,log_beta_vec):
-            gamma_vec.append(constraints.log_normalize(log_alpha + log_beta,dim=1))
-
-        xi_vec:List[torch.Tensor] = []
         for log_alpha,log_beta,log_probs in zip(log_alpha_vec,log_beta_vec,X.log_probs):
             trans_alpha = self.A.unsqueeze(0) + log_alpha[:-1].unsqueeze(-1)
             probs_beta = log_probs[1:] + log_beta[1:]
+            
             xi_vec.append(constraints.log_normalize(trans_alpha + probs_beta.unsqueeze(1),dim=(1,2)))
+            gamma_vec.append(constraints.log_normalize(log_alpha + log_beta,dim=1))
 
         return gamma_vec, xi_vec
     

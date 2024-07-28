@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, List, Tuple, Any
+from typing import Optional, List, Tuple, Any, Literal
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
@@ -141,11 +141,11 @@ class BaseHSMM(nn.Module,ABC):
             seq_lengths = [n_samples]
 
         tensor_list = list(torch.split(X_valid,seq_lengths))
-        nested_tensor_probs = [self.map_emission(tens) for tens in tensor_list]
+        tensor_probs = [self.map_emission(tens) for tens in tensor_list]
 
         return utils.Observations(
             tensor_list,
-            nested_tensor_probs,
+            tensor_probs,
             seq_lengths
         )  
     
@@ -187,11 +187,13 @@ class BaseHSMM(nn.Module,ABC):
         X_valid = self.to_observations(X,lengths)
         valid_theta = self.to_contextuals(theta,X_valid) if theta is not None else None
 
-        self.conv = ConvergenceHandler(tol=tol,
-                                       max_iter=max_iter,
-                                       n_init=n_init,
-                                       post_conv_iter=post_conv_iter,
-                                       verbose=verbose)
+        self.conv = ConvergenceHandler(
+            tol=tol,
+            max_iter=max_iter,
+            n_init=n_init,
+            post_conv_iter=post_conv_iter,
+            verbose=verbose
+        )
 
         for rank in range(n_init):
             if rank > 0:
@@ -217,8 +219,8 @@ class BaseHSMM(nn.Module,ABC):
 
     def predict(self, 
                 X:torch.Tensor, 
-                algorithm:str = 'viterbi',
-                lengths:Optional[List[int]] = None) -> List[torch.Tensor]:
+                lengths:Optional[List[int]] = None,
+                algorithm:Literal['map','viterbi'] = 'viterbi') -> List[torch.Tensor]:
         """Predict the most likely sequence of hidden states"""
         X_valid = self.to_observations(X,lengths)
         if algorithm == 'map':
@@ -235,9 +237,13 @@ class BaseHSMM(nn.Module,ABC):
               lengths:Optional[List[int]]=None,
               by_sample:bool=True) -> torch.Tensor:
         """Compute the joint log-likelihood"""
-        log_likelihoods = self._compute_log_likelihood(self.to_observations(X,lengths))
-        res = log_likelihoods if by_sample else log_likelihoods.sum(0,keepdim=True)
-        return res
+        X_valid = self.to_observations(X,lengths)
+        log_likelihoods = self._compute_log_likelihood(X_valid)
+
+        if by_sample:
+            return log_likelihoods
+        else:
+            return log_likelihoods.sum(0,keepdim=True)
 
     def ic(self,
            X:torch.Tensor,
@@ -248,7 +254,7 @@ class BaseHSMM(nn.Module,ABC):
         log_likelihood = self.score(X,lengths,by_sample)
         return constraints.compute_information_criteria(X.shape[0],log_likelihood,self.dof,criterion)
 
-    def _forward(self, X:utils.Observations) -> torch.Tensor:
+    def _forward(self, X:utils.Observations) -> List[torch.Tensor]:
         """Forward pass of the forward-backward algorithm."""
         alpha_vec:List[torch.Tensor] = []
         for seq_probs,seq_len in zip(X.log_probs,X.lengths):
@@ -258,18 +264,18 @@ class BaseHSMM(nn.Module,ABC):
             )
             
             log_alpha[0] = self.D + self.pi.reshape(-1,1) + seq_probs[0].unsqueeze(-1)
-            for t in range(1,seq_len):
-                alpha_trans_sum = torch.logsumexp(log_alpha[t-1,:,0].reshape(-1,1) + self.A, dim=0) + seq_probs[t]
+            for t in range(seq_len-1):
+                alpha_trans_sum = torch.logsumexp(log_alpha[t,:,0].reshape(-1,1) + self.A, dim=0) + seq_probs[t+1]
 
-                log_alpha[t,:,-1] = alpha_trans_sum + self.D[:,-1]
-                log_alpha[t,:,:-1] = torch.logaddexp(log_alpha[t-1,:,1:] + seq_probs[t].reshape(-1,1),
+                log_alpha[t+1,:,-1] = alpha_trans_sum + self.D[:,-1]
+                log_alpha[t+1,:,:-1] = torch.logaddexp(log_alpha[t,:,1:] + seq_probs[t+1].reshape(-1,1),
                                                     alpha_trans_sum.reshape(-1,1) + self.D[:,:-1])
             
             alpha_vec.append(log_alpha)
                     
-        return nested_tensor(alpha_vec,dtype=torch.float64)
+        return alpha_vec
 
-    def _backward(self, X:utils.Observations) -> torch.Tensor:
+    def _backward(self, X:utils.Observations) -> List[torch.Tensor]:
         """Backward pass of the forward-backward algorithm."""
         beta_vec:List[torch.Tensor] = []
         for seq_probs,seq_len in zip(X.log_probs,X.lengths):
@@ -279,17 +285,15 @@ class BaseHSMM(nn.Module,ABC):
             )
             
             for t in reversed(range(seq_len-1)):
-                beta_dur_sum = torch.logsumexp(log_beta[t+1] + self.D, dim=1)
-
-                log_beta[t,:,0] = torch.logsumexp(self.A + seq_probs[t+1] + beta_dur_sum, dim=1)
+                log_beta[t,:,0] = torch.logsumexp(self.A + seq_probs[t+1],1) + torch.logsumexp(log_beta[t+1] + self.D,1)
                 log_beta[t,:,1:] = log_beta[t+1,:,:-1] + seq_probs[t+1].reshape(-1,1)
             
             beta_vec.append(log_beta)
                     
-        return nested_tensor(beta_vec,dtype=torch.float64)
+        return beta_vec
 
 
-    def _gamma(self, X:utils.Observations, log_alpha:torch.Tensor, log_xi:torch.Tensor) -> torch.Tensor:
+    def _gamma(self, X:utils.Observations, log_alpha:List[torch.Tensor], log_xi:List[torch.Tensor]) -> List[torch.Tensor]:
         """Compute the Log-Gamma variable in Hidden Markov Model."""
         gamma_vec:List[torch.Tensor] = []
         for seq_len,alpha,xi in zip(X.lengths,log_alpha,log_xi):
@@ -299,61 +303,92 @@ class BaseHSMM(nn.Module,ABC):
                 dtype=torch.float64
             )
 
-            gamma[-1] = constraints.log_normalize(alpha[-1].logsumexp(1),0).exp()
+            gamma[-1] = alpha[-1].logsumexp(1).exp()
             for t in reversed(range(seq_len-1)):
-                print(gamma[t+1],torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1))
+                print(f'gamma is {gamma[t+1]}, \n increment is {torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)}')
                 gamma[t] = gamma[t+1] + torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)
+                print(gamma[t]/gamma[t].sum())
 
             gamma_vec.append(gamma.log())
 
-        return nested_tensor(gamma_vec,dtype=torch.float64)
+        return gamma_vec
 
-    def _xi(self, X:utils.Observations, log_alpha:torch.Tensor, log_beta:torch.Tensor) -> torch.Tensor:
+    def _xi(self, X:utils.Observations, log_alpha:List[torch.Tensor], log_beta:List[torch.Tensor]) -> List[torch.Tensor]:
         """Compute the Log-Xi variable in Hidden Markov Model."""
         xi_vec:List[torch.Tensor] = []
-        for seq_probs,alpha,beta in zip(X.log_probs,log_alpha,log_beta):
-            probs_dur_beta = seq_probs[:-1] + torch.logsumexp(self.D.unsqueeze(0) + beta[1:], dim=2)
-            trans_alpha = self.A.unsqueeze(0) + alpha[:-1,:,0].unsqueeze(-1) 
-            log_xi = trans_alpha + probs_dur_beta.unsqueeze(-1)
+        gamma_vec:List[torch.Tensor] = []
+
+        for seq_len,seq_probs,alpha,beta in zip(X.lengths,X.log_probs,log_alpha,log_beta):
+            gamma = torch.zeros(
+                size=(seq_len,self.n_states), 
+                dtype=torch.float64
+            )
+
+            trans_alpha = alpha[:-1,:,0].unsqueeze(-1) + self.A.unsqueeze(0) + seq_probs[1:].unsqueeze(1)
+            probs_dur_beta = torch.logsumexp(self.D.unsqueeze(0) + beta[1:],2)
+            log_xi = trans_alpha + probs_dur_beta.unsqueeze(1)
+
+            xi_real = log_xi.exp()
+            gamma[-1] = alpha[-1].logsumexp(1).exp()
+            for t in reversed(range(seq_len-1)):
+                gamma[t] = gamma[t+1] + torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)
+
+            gamma_vec.append(constraints.log_normalize(gamma.log(),dim=1))
             xi_vec.append(constraints.log_normalize(log_xi,(1,2)))
         
-        return nested_tensor(xi_vec,dtype=torch.float64)
+        return xi_vec
     
-    def _eta(self, X:utils.Observations, log_alpha:torch.Tensor, log_beta:torch.Tensor) -> torch.Tensor:
+    def _eta(self, X:utils.Observations, log_alpha:List[torch.Tensor], log_beta:List[torch.Tensor]) -> List[torch.Tensor]:
         """Compute the Eta variable in Hidden Markov Model."""
         eta_vec:List[torch.Tensor] = []
         for seq_probs,alpha,beta in zip(X.log_probs,log_alpha,log_beta):
-            trans_alpha = torch.logsumexp(alpha[:-1,:,0].unsqueeze(-1) + self.A, dim=1)
+            trans_alpha = torch.logsumexp(alpha[:-1,:,0].unsqueeze(-1) + self.A.unsqueeze(0),1)
             log_eta = beta[1:] + self.D.unsqueeze(0) + seq_probs[:-1].unsqueeze(-1) + trans_alpha.unsqueeze(-1)
 
             eta_vec.append(constraints.log_normalize(log_eta))
             
-        return nested_tensor(eta_vec,dtype=torch.float64)
+        return eta_vec
 
-    def _compute_posteriors(self, X:utils.Observations) -> Tuple[torch.Tensor,...]:
+    def _compute_posteriors(self, X:utils.Observations) -> Tuple[List[torch.Tensor],...]:
         """Execute the forward-backward algorithm and compute the log-Gamma, log-Xi and Log-Eta variables."""
         log_alpha = self._forward(X)
         log_beta = self._backward(X)
-        log_xi = self._xi(X,log_alpha,log_beta)
-        log_eta = self._eta(X,log_alpha,log_beta)
-        log_gamma = self._gamma(X,log_alpha,log_xi)
 
-        return log_gamma, log_xi, log_eta
+        xi_vec:List[torch.Tensor] = []
+        gamma_vec:List[torch.Tensor] = []
+
+        for seq_len,seq_probs,alpha,beta in zip(X.lengths,X.log_probs,log_alpha,log_beta):
+            gamma = torch.zeros(
+                size=(seq_len,self.n_states), 
+                dtype=torch.float64
+            )
+
+            trans_alpha = self.A.unsqueeze(0) + alpha[:-1,:,0].unsqueeze(-1) + seq_probs[1:].unsqueeze(1)
+            probs_dur_beta = torch.logsumexp(self.D.unsqueeze(0) + beta[1:],2)
+            log_xi = trans_alpha + probs_dur_beta.unsqueeze(1)
+
+            xi_real = log_xi.exp()
+            gamma[-1] = alpha[-1].logsumexp(1).exp()
+            for t in reversed(range(seq_len-1)):
+                gamma[t] = gamma[t+1] + torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)
+                print(f'gamma is {constraints.log_normalize(gamma[t].log(),dim=0)}',gamma[t])
+
+            gamma_vec.append(constraints.log_normalize(gamma.log(),dim=1))
+            xi_vec.append(constraints.log_normalize(log_xi,(1,2)))
+
+        #log_xi = self._xi(X,log_alpha,log_beta)
+        log_eta = self._eta(X,log_alpha,log_beta)
+        #log_gamma = self._gamma(X,log_alpha,log_xi)
+
+        return gamma_vec, xi_vec, log_eta
 
     def _estimate_model_params(self, X:utils.Observations, theta:Optional[utils.ContextualVariables]) -> nn.ParameterDict:
         """Compute the updated parameters for the model."""
         log_gamma, log_xi, log_eta = self._compute_posteriors(X)
 
-        concated_left_gamma = torch.cat([tens[0] for tens in log_gamma])
-        new_pi = constraints.log_normalize(concated_left_gamma.logsumexp(0),0)
-
-        concated_xi = torch.cat(log_xi.unbind(0))
-        new_A = constraints.log_normalize(concated_xi.logsumexp(0))
-
-        concated_eta = torch.cat(log_eta.unbind(0))
-        new_D = constraints.log_normalize(concated_eta.logsumexp(0))
-
-        concated_real_gamma = torch.cat(log_gamma.unbind(0)).exp()
+        new_pi = constraints.log_normalize(torch.stack([tens[0] for tens in log_gamma],1).logsumexp(1),0)
+        new_A = constraints.log_normalize(torch.cat(log_xi).logsumexp(0))
+        new_D = constraints.log_normalize(torch.cat(log_eta).logsumexp(0))
         new_pdf = self._estimate_emission_pdf(
             X=torch.cat(X.sequence),
             posterior=torch.cat(log_gamma).exp(),
@@ -374,13 +409,13 @@ class BaseHSMM(nn.Module,ABC):
 
     def _map(self, X:utils.Observations) -> List[torch.Tensor]:
         """Compute the most likely (MAP) sequence of indiviual hidden states."""
-        gamma,_ = self._compute_posteriors(X)
-        map_paths = torch.split(gamma.argmax(1), X.lengths)
-        return list(map_paths)
+        gamma,_,_ = self._compute_posteriors(X)
+        map_paths = [gamma.argmax(1) for gamma in gamma]
+        return map_paths
 
     def _compute_log_likelihood(self, X:utils.Observations) -> torch.Tensor:
         """Compute the log-likelihood of the given sequence."""
-        fwd = self._forward(X).unbind(0)
-        concated_fwd = torch.cat([tens[0] for tens in fwd])
-        scores = concated_fwd.logsumexp(1)
+        log_alpha_vec = self._forward(X)
+        concated_fwd = torch.stack([log_alpha[-1] for log_alpha in log_alpha_vec],1)
+        scores = concated_fwd.logsumexp(0)
         return scores
