@@ -9,13 +9,13 @@ If you have any suggestions, please let me know. I'm open to all ideas.
 """
 
 from .hmm import MultinomialHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
-from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM
+from .hsmm import MultinomialHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM
 from .utilities import utils, constraints, SeedGenerator, ConvergenceHandler
 
 
 __all__ = [
     'MultinomialHMM', 
-    'CategoricalHSMM', 
+    'MultinomialHSMM', 
     'GaussianHMM',
     'GaussianHSMM',
     'PoissonHMM',

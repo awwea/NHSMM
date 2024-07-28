@@ -189,14 +189,12 @@ class BaseHMM(nn.Module,ABC):
             
             self.conv.push_pull(self._compute_log_likelihood(X_valid).sum(),0,rank)
             for iter in range(1,self.conv.max_iter+1):
-
-                self._params.update(self._estimate_model_params(X_valid,valid_theta))
-
+                new_params = self._estimate_model_params(X_valid,valid_theta)
+                self._params.update(new_params)
                 X_valid.log_probs = [self.map_emission(tens) for tens in X_valid.sequence]
                 
                 curr_log_like = self._compute_log_likelihood(X_valid).sum()
                 converged = self.conv.push_pull(curr_log_like,iter,rank)
-
                 if converged and verbose and not ignore_conv:
                     break
         
@@ -253,8 +251,8 @@ class BaseHMM(nn.Module,ABC):
             )
             
             log_alpha[0] = self.pi + log_probs[0]
-            for t in range(1,seq_len):
-                log_alpha[t] = log_probs[t] + torch.logsumexp(self.A + log_alpha[t-1].reshape(-1,1), dim=0)
+            for t in range(seq_len-1):
+                log_alpha[t+1] = log_probs[t+1] + torch.logsumexp(self.A + log_alpha[t].reshape(-1,1),dim=0)
 
             alpha_vec.append(log_alpha)
  
@@ -270,7 +268,7 @@ class BaseHMM(nn.Module,ABC):
             )
             
             for t in reversed(range(seq_len-1)):
-                log_beta[t] = torch.logsumexp(self.A + log_probs[t+1] + log_beta[t+1], dim=1)
+                log_beta[t] = torch.logsumexp(self.A + log_probs[t+1] + log_beta[t+1],dim=1)
             
             beta_vec.append(log_beta)
 
@@ -283,15 +281,13 @@ class BaseHMM(nn.Module,ABC):
 
         gamma_vec:List[torch.Tensor] = []
         for log_alpha,log_beta in zip(log_alpha_vec,log_beta_vec):
-            gamma_vec.append(constraints.log_normalize(log_alpha + log_beta))
+            gamma_vec.append(constraints.log_normalize(log_alpha + log_beta,dim=1))
 
         xi_vec:List[torch.Tensor] = []
         for log_alpha,log_beta,log_probs in zip(log_alpha_vec,log_beta_vec,X.log_probs):
             trans_alpha = self.A.unsqueeze(0) + log_alpha[:-1].unsqueeze(-1)
-            probs_beta = (log_probs[:-1] + log_beta[1:]).unsqueeze(1)
-            log_xi = constraints.log_normalize(trans_alpha + probs_beta,dim=(1,2))
-
-            xi_vec.append(log_xi)
+            probs_beta = log_probs[1:] + log_beta[1:]
+            xi_vec.append(constraints.log_normalize(trans_alpha + probs_beta.unsqueeze(1),dim=(1,2)))
 
         return gamma_vec, xi_vec
     

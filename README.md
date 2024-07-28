@@ -20,8 +20,6 @@
 
 This repository was created as an attempt to learn and recreate the parameter estimation for Hidden Markov Models using PyTorch library. Included are models with Categorical and Gaussian emissions for both Hidden Markov Models (`HMM`) and Hidden Semi-Markov Models(`HSMM`). As en extension I am trying to include models where the parameter estimation depends on certain set of external variables, these models are referred to as Contextual HMM or Parametric/Conditional HMM where the emission probabilities/distribution parameters are influenced by the context either time dependent or independent.
 
-[PYPI Package](https://pypi.org/project/chadhmm/)
-
 The documentation on the parameter estimation and model description is captured in - now empty - [docs](https://github.com/GarroshIcecream/ChadHMM//tree/master/docs) folder. Furthermore, there are [examples](https://github.com/GarroshIcecream/ChadHMM//tree/master/tests) of the usage, especially on the financial time series, focusing on the sequence prediction but also on the possible interpretation of the model parameters.
 
 ## Getting Started <a name = "getting_started"></a>
@@ -29,14 +27,13 @@ The documentation on the parameter estimation and model description is captured 
 This is an example of how you may give instructions on setting up your project locally.
 To get a local copy up and running follow these simple example steps.
 
-1. Install from PyPi
+1. Install from PyPi server
    ```bash
    $ pip install chadhmm
    ```
 2. Clone the repo
    ```bash
    $ git clone https://github.com/GarroshIcecream/ChadHMM.git
-   $ cd ChadHMM && pipenv sync
    ```
 
 ## Usage <a name = "usage"></a>
@@ -46,13 +43,16 @@ Please refer to the [docs](https://github.com/GarroshIcecream/ChadHMM//tree/mast
 See below example of training and inference using `MultinomialHMM`:
 ```python
 from chadhmm import MultinomialHMM
+from chadhmm.utilities import constraints
 import torch
 
 # Initialize Multinomial HMM with 6 states and 4 emissions
-hmm = MultinomialHMM(n_states=6,
-                     n_features=4,
-                     n_trials=2,
-                     transitions='ergodic')
+hmm = MultinomialHMM(
+  n_states=6,
+  n_features=4,
+  n_trials=2,
+  transitions=constraints.Transitions.ERGODIC
+)
 
 # Mock the example data and one hot encode
 train_seq = torch.randint(0,hmm.n_features,(1000,))
@@ -63,15 +63,27 @@ one_hot = hmm.n_trials * torch.nn.functional.one_hot(train_seq,4)
 hmm.fit(X=one_hot,max_iter=5,lengths=[400,600],n_init=1,verbose=False)
 
 # Compute log likelihood of generated sequence (set by_sample=False for joint log likelihood)
-log_likes = hmm.score(one_hot,lengths=[400,500,100], by_sample=True)
+log_likes = hmm.score(
+  one_hot,
+  lengths=[400,500,100], 
+  by_sample=True
+)
 print(log_likes)
 
 # Compute Akeike Information criteria for each sequence (AIC, BIC or HQC)
-ics = hmm.ic(one_hot,lengths=[400,500,100],criterion='HQC')
+ics = hmm.ic(
+  one_hot,
+  lengths=[400,500,100],
+  criterion=constraints.InformCriteria.AIC
+)
 print(ics)
 
 # Get the most likely sequence using Viterbi algorithm (MAP also available)
-viterbi_path = hmm.predict(one_hot,lengths=[400,500,100],algorithm='viterbi')
+viterbi_path = hmm.predict(
+  one_hot,
+  lengths=[400,500,100],
+  algorithm='viterbi'
+)
 print(viterbi_path)
 ```
 
@@ -92,7 +104,7 @@ print(viterbi_path)
 - [ ] Support for CUDA training
 - [x] Support different types of Transition Matrices - semi, left-to-right and ergodic
 - [x] Support for wider range of emissions distributions
-- [X] K-Means for Gaussian means initialization
+- [x] K-Means for Gaussian means initialization
 - [x] Code base refactor, abstractions might be confusing
 
 See the [open issues](https://github.com/GarroshIcecream/ChadHMM/issues) for a full list of proposed features (and known issues).

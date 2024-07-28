@@ -14,10 +14,10 @@ class MultinomialHMM(BaseHMM):
     
     If n_trials = 1 and and n_features = 2 
         Bernoulli distribution
-    If n_trials > 1 and and n_features = 2
-        Binomial distribution
     If n_trials = 1 and and n_features > 2
         Categorical distribution
+    If n_trials > 1 and and n_features = 2
+        Binomial distribution
     If n_trials > 1 and and n_features > 2
         Multionomial distribution
 
@@ -78,7 +78,7 @@ class MultinomialHMM(BaseHMM):
         """Compute the emission probabilities for each hidden state."""
         if theta is not None:
             #TODO: Implement contextualized emissions
-            raise NotImplementedError('Contextualized emissions not implemented for CategoricalEmissions')
+            raise NotImplementedError('Contextualized emissions not implemented for MultinomialEmissions')
         else:
             new_B = posterior.T @ X
             new_B /= posterior.T.sum(1,keepdim=True)
