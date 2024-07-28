@@ -20,10 +20,19 @@ class GaussianHMM(BaseHMM):
         Number of hidden states in the model.
     n_features (int):
         Number of features in the emission data.
+    transitions (Transitions):
+        Type of transitions to use for the model.
+            If 'ergodic'
+                The transition probabilities are uniform.
+            If 'left-to-right'
+                The transition probabilities are left-to-right
+                (i.e. each state can only transition to the next state).
+    covariance_type (CovarianceType):
+        Type of covariance parameters to use for the emission distributions.
+    k_means (bool):
+        Whether to use k-means clustering to initialize the emission means.
     alpha (float):
         Dirichlet concentration parameter for the prior over initial state probabilities and transition probabilities.
-    covariance_type (COVAR_TYPES):
-        Type of covariance parameters to use for the emission distributions.
     min_covar (float):
         Floor value for covariance matrices.
     seed (Optional[int]):
@@ -66,14 +75,16 @@ class GaussianHMM(BaseHMM):
     def _estimate_emission_pdf(self,X,posterior,theta=None):
         new_means = self._compute_means(X,posterior,theta)
         new_covs = self._compute_covs(X,posterior,new_means,theta)
-
         return MultivariateNormal(new_means,new_covs)
 
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
         """Sample cluster means from K Means algorithm"""
-        k_means_alg = KMeans(n_clusters=self.n_states, 
-                             random_state=seed, 
-                             n_init="auto").fit(X)
+        k_means_alg = KMeans(
+            n_clusters=self.n_states, 
+            random_state=seed, 
+            n_init="auto"
+        ).fit(X)
+        
         return torch.from_numpy(k_means_alg.cluster_centers_).reshape(self.n_states,self.n_features)
 
     def _compute_means(self,

@@ -29,7 +29,7 @@ class MultinomialHMM(BaseHMM):
         Number of emissions in the model. Defines the shape of Emisison Matrix (n_states,n_features)
     n_trials (int):
         Number of trials in the model
-    transitions (Literal['ergodic','left-to-right'])
+    transitions (Transitions)
         Represents the type of the transition matrix in HMM
             If 'ergodic' 
                 all states must be reachable from any state
@@ -68,7 +68,7 @@ class MultinomialHMM(BaseHMM):
         return Multinomial(total_count=self.n_trials,logits=emission_matrix)
 
     def _estimate_emission_pdf(self,X,posterior,theta=None):
-        new_B = self._compute_B(X,posterior,theta)
+        new_B = torch.log(self._compute_B(X,posterior,theta))
         return Multinomial(total_count=self.n_trials,logits=new_B)
 
     def _compute_B(self,

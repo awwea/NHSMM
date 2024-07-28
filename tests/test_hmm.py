@@ -2,13 +2,13 @@ import unittest
 import torch
 from torch.nn import ParameterDict, Parameter
 from torch.distributions import Distribution
-from chadhmm.hmm import CategoricalHMM #type:ignore
+from chadhmm.hmm import MultinomialHMM #type:ignore
 
 
 class MyTestCase(unittest.TestCase):
 
     def setUp(self):
-        self.hmm = CategoricalHMM(2,3)
+        self.hmm = MultinomialHMM(2,3)
 
     def test_pdf_subclass(self):
         self.assertTrue(issubclass(self.hmm.pdf,Distribution))

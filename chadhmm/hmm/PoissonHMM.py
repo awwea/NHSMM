@@ -18,6 +18,13 @@ class PoissonHMM(BaseHMM):
         Number of hidden states in the model.
     n_features (int): 
         Number of emissions in the model.
+    transitions (Transitions):
+        Type of transitions to use for the model.
+            If 'ergodic'
+                The transition probabilities are uniform.
+            If 'left-to-right'
+                The transition probabilities are left-to-right
+                (i.e. each state can only transition to the next state).    
     alpha (float):
         Dirichlet concentration parameter for the prior over initial distribution, transition amd emission probabilities.
     seed (int):

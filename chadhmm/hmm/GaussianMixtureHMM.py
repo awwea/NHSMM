@@ -22,10 +22,19 @@ class GaussianMixtureHMM(BaseHMM):
         Number of features in the emission data.
     n_components (int):
         Number of components in the Gaussian mixture model.
+    transitions (Transitions):
+        Type of transitions to use for the model.
+            If 'ergodic'
+                The transition probabilities are uniform.
+            If 'left-to-right'
+                The transition probabilities are left-to-right
+                (i.e. each state can only transition to the next state).
+    covariance_type (CovarianceType):
+        Type of covariance parameters to use for the emission distributions.
+    k_means (bool):
+        Whether to use k-means clustering to initialize the emission means.
     alpha (float):
         Dirichlet concentration parameter for the prior over initial state probabilities and transition probabilities.
-    covariance_type (COVAR_TYPES):
-        Type of covariance parameters to use for the emission distributions.
     min_covar (float):
         Floor value for covariance matrices.
     seed (Optional[int]):
@@ -38,9 +47,9 @@ class GaussianMixtureHMM(BaseHMM):
                  n_features:int,
                  n_components:int = 1,
                  transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
+                 covariance_type:constraints.CovarianceType = constraints.CovarianceType.FULL,
                  k_means:bool = False,
                  alpha:float = 1.0,
-                 covariance_type:constraints.CovarianceType = constraints.CovarianceType.FULL,
                  min_covar:float = 1e-3,
                  seed:Optional[int] = None):
 
@@ -76,20 +85,24 @@ class GaussianMixtureHMM(BaseHMM):
     def _estimate_emission_pdf(self,X,posterior,theta):
         responsibilities = self._compute_log_responsibilities(X).exp()
         posterior_resp = responsibilities.permute(1,2,0) * posterior.T.unsqueeze(-2)
-        new_logits = constraints.log_normalize(torch.log(posterior_resp.sum(-1)))
+
+        new_weights = constraints.log_normalize(torch.log(posterior_resp.sum(-1)))
         new_means = self._compute_means(X,posterior_resp,theta)
         new_covs = self._compute_covs(X,posterior_resp,new_means,theta)
 
         return MixtureSameFamily(
-            Categorical(logits=new_logits),
+            Categorical(logits=new_weights),
             MultivariateNormal(new_means,new_covs)
         )
     
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
         """Sample cluster means from K Means algorithm"""
-        k_means_alg = KMeans(n_clusters=self.n_states, 
-                             random_state=seed, 
-                             n_init="auto").fit(X)
+        k_means_alg = KMeans(
+            n_clusters=self.n_states, 
+            random_state=seed, 
+            n_init="auto"
+        ).fit(X)
+
         return torch.from_numpy(k_means_alg.cluster_centers_).reshape(self.n_states,self.n_components,self.n_features)
     
     def _compute_log_responsibilities(self, X:torch.Tensor) -> torch.Tensor:
