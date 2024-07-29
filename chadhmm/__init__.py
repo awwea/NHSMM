@@ -8,8 +8,22 @@ But seriously this package needs you to help me make it better. I'm not a profes
 If you have any suggestions, please let me know. I'm open to all ideas.
 """
 
-# Import HMM objects
-from .hmm import CategoricalHMM, GaussianHMM, GaussianMixtureHMM
-from .hsmm import CategoricalHSMM, GaussianHSMM, GaussianMixtureHSMM
-from .MixtureModels import GaussianMixtureModel
-from .stochastic_matrix import TransitionMatrix, EmissionMatrix, TransitionMatrix, WeightsMatrix, DurationMatrix, ProbabilityVector
+from .hmm import MultinomialHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
+from .hsmm import MultinomialHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM
+from .utilities import utils, constraints, SeedGenerator, ConvergenceHandler
+
+
+__all__ = [
+    'MultinomialHMM', 
+    'MultinomialHSMM', 
+    'GaussianHMM',
+    'GaussianHSMM',
+    'PoissonHMM',
+    'PoissonHSMM',
+    'GaussianMixtureHMM',
+    'GaussianMixtureHSMM',
+    'utils',
+    'constraints',
+    'SeedGenerator',
+    'ConvergenceHandler'
+]
