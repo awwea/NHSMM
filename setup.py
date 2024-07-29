@@ -43,9 +43,4 @@ setuptools.setup(
     cmdclass={
         'clean': CleanCommand,
     },
-    classifiers=['Development Status :: ' + statuses[int(cfg['status'])],
-                 'Intended Audience :: ' + cfg['audience'].title(),
-                 'License :: ' + cfg['license']] +
-                ['Programming Language :: Python :: ' + o for o in
-                 py_versions[py_versions.index(min_python):]],
     **setup_cfg)
