@@ -1,10 +1,10 @@
 from typing import Optional
 import torch
 from torch.distributions import MultivariateNormal
-from sklearn.cluster import KMeans # type: ignore
+from sklearn.cluster import KMeans
 
-from chadhmm.hmm.BaseHMM import BaseHMM # type: ignore
-from chadhmm.utilities import utils, constraints # type: ignore
+from chadhmm.hmm.BaseHMM import BaseHMM
+from chadhmm.utilities import utils, constraints
 
 
 class GaussianHMM(BaseHMM):

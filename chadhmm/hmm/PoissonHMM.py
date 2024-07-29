@@ -2,8 +2,8 @@ from typing import Optional
 import torch
 from torch.distributions import Poisson, Independent
 
-from chadhmm.hmm.BaseHMM import BaseHMM # type: ignore
-from chadhmm.utilities import utils, constraints # type: ignore
+from chadhmm.hmm.BaseHMM import BaseHMM
+from chadhmm.utilities import utils, constraints
 
 
 class PoissonHMM(BaseHMM):

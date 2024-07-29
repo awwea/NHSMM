@@ -3,9 +3,8 @@ from typing import Optional, List, Tuple, Any, Literal
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
-from torch.nested import nested_tensor
 
-from chadhmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler # type: ignore
+from chadhmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler
 
 
 class BaseHSMM(nn.Module,ABC):
@@ -20,7 +19,7 @@ class BaseHSMM(nn.Module,ABC):
                  n_states:int,
                  max_duration:int,
                  alpha:float,
-                 seed:Optional[int] = None):
+                 seed:Optional[int]):
         
         super().__init__()
         self.n_states = n_states
@@ -263,13 +262,15 @@ class BaseHSMM(nn.Module,ABC):
                 dtype=torch.float64
             )
             
-            log_alpha[0] = self.D + self.pi.reshape(-1,1) + seq_probs[0].unsqueeze(-1)
+            log_alpha[0] = (self.pi + seq_probs[0]).unsqueeze(-1) + self.D
             for t in range(seq_len-1):
-                alpha_trans_sum = torch.logsumexp(log_alpha[t,:,0].reshape(-1,1) + self.A, dim=0) + seq_probs[t+1]
+                alpha_trans_sum = torch.logsumexp(log_alpha[t,:,0].reshape(-1,1) + self.A,0) + seq_probs[t+1]
 
                 log_alpha[t+1,:,-1] = alpha_trans_sum + self.D[:,-1]
-                log_alpha[t+1,:,:-1] = torch.logaddexp(log_alpha[t,:,1:] + seq_probs[t+1].reshape(-1,1),
-                                                    alpha_trans_sum.reshape(-1,1) + self.D[:,:-1])
+                log_alpha[t+1,:,:-1] = torch.logaddexp(
+                    log_alpha[t,:,1:] + seq_probs[t+1].unsqueeze(-1),
+                    self.D[:,:-1] + alpha_trans_sum.unsqueeze(-1)
+                )
             
             alpha_vec.append(log_alpha)
                     
@@ -285,76 +286,20 @@ class BaseHSMM(nn.Module,ABC):
             )
             
             for t in reversed(range(seq_len-1)):
-                log_beta[t,:,0] = torch.logsumexp(self.A + seq_probs[t+1],1) + torch.logsumexp(log_beta[t+1] + self.D,1)
-                log_beta[t,:,1:] = log_beta[t+1,:,:-1] + seq_probs[t+1].reshape(-1,1)
+                log_beta[t,:,0] = torch.logsumexp(self.A + seq_probs[t+1] + torch.logsumexp(log_beta[t+1] + self.D,1),1)
+                log_beta[t,:,1:] = log_beta[t+1,:,:-1] + seq_probs[t+1].unsqueeze(-1)
             
             beta_vec.append(log_beta)
                     
         return beta_vec
-
-
-    def _gamma(self, X:utils.Observations, log_alpha:List[torch.Tensor], log_xi:List[torch.Tensor]) -> List[torch.Tensor]:
-        """Compute the Log-Gamma variable in Hidden Markov Model."""
-        gamma_vec:List[torch.Tensor] = []
-        for seq_len,alpha,xi in zip(X.lengths,log_alpha,log_xi):
-            xi_real = xi.exp()
-            gamma = torch.zeros(
-                size=(seq_len,self.n_states), 
-                dtype=torch.float64
-            )
-
-            gamma[-1] = alpha[-1].logsumexp(1).exp()
-            for t in reversed(range(seq_len-1)):
-                print(f'gamma is {gamma[t+1]}, \n increment is {torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)}')
-                gamma[t] = gamma[t+1] + torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)
-                print(gamma[t]/gamma[t].sum())
-
-            gamma_vec.append(gamma.log())
-
-        return gamma_vec
-
-    def _xi(self, X:utils.Observations, log_alpha:List[torch.Tensor], log_beta:List[torch.Tensor]) -> List[torch.Tensor]:
-        """Compute the Log-Xi variable in Hidden Markov Model."""
-        xi_vec:List[torch.Tensor] = []
-        gamma_vec:List[torch.Tensor] = []
-
-        for seq_len,seq_probs,alpha,beta in zip(X.lengths,X.log_probs,log_alpha,log_beta):
-            gamma = torch.zeros(
-                size=(seq_len,self.n_states), 
-                dtype=torch.float64
-            )
-
-            trans_alpha = alpha[:-1,:,0].unsqueeze(-1) + self.A.unsqueeze(0) + seq_probs[1:].unsqueeze(1)
-            probs_dur_beta = torch.logsumexp(self.D.unsqueeze(0) + beta[1:],2)
-            log_xi = trans_alpha + probs_dur_beta.unsqueeze(1)
-
-            xi_real = log_xi.exp()
-            gamma[-1] = alpha[-1].logsumexp(1).exp()
-            for t in reversed(range(seq_len-1)):
-                gamma[t] = gamma[t+1] + torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)
-
-            gamma_vec.append(constraints.log_normalize(gamma.log(),dim=1))
-            xi_vec.append(constraints.log_normalize(log_xi,(1,2)))
-        
-        return xi_vec
     
-    def _eta(self, X:utils.Observations, log_alpha:List[torch.Tensor], log_beta:List[torch.Tensor]) -> List[torch.Tensor]:
-        """Compute the Eta variable in Hidden Markov Model."""
-        eta_vec:List[torch.Tensor] = []
-        for seq_probs,alpha,beta in zip(X.log_probs,log_alpha,log_beta):
-            trans_alpha = torch.logsumexp(alpha[:-1,:,0].unsqueeze(-1) + self.A.unsqueeze(0),1)
-            log_eta = beta[1:] + self.D.unsqueeze(0) + seq_probs[:-1].unsqueeze(-1) + trans_alpha.unsqueeze(-1)
-
-            eta_vec.append(constraints.log_normalize(log_eta))
-            
-        return eta_vec
-
     def _compute_posteriors(self, X:utils.Observations) -> Tuple[List[torch.Tensor],...]:
         """Execute the forward-backward algorithm and compute the log-Gamma, log-Xi and Log-Eta variables."""
         log_alpha = self._forward(X)
         log_beta = self._backward(X)
 
         xi_vec:List[torch.Tensor] = []
+        eta_vec:List[torch.Tensor] = []
         gamma_vec:List[torch.Tensor] = []
 
         for seq_len,seq_probs,alpha,beta in zip(X.lengths,X.log_probs,log_alpha,log_beta):
@@ -363,24 +308,24 @@ class BaseHSMM(nn.Module,ABC):
                 dtype=torch.float64
             )
 
-            trans_alpha = self.A.unsqueeze(0) + alpha[:-1,:,0].unsqueeze(-1) + seq_probs[1:].unsqueeze(1)
-            probs_dur_beta = torch.logsumexp(self.D.unsqueeze(0) + beta[1:],2)
-            log_xi = trans_alpha + probs_dur_beta.unsqueeze(1)
+            trans_alpha = alpha[:-1,:,0].unsqueeze(-1) + self.A.unsqueeze(0)
+            dur_beta = beta[1:] + self.D.unsqueeze(0)
 
-            xi_real = log_xi.exp()
-            gamma[-1] = alpha[-1].logsumexp(1).exp()
+            log_xi = (seq_probs[1:] + torch.logsumexp(dur_beta,2)).unsqueeze(1) + trans_alpha 
+            normed_xi = constraints.log_normalize(log_xi,(1,2))
+            log_eta = (torch.logsumexp(trans_alpha,1) + seq_probs[1:]).unsqueeze(-1) + dur_beta
+            normed_eta = constraints.log_normalize(log_eta)
+
+            xi_real = normed_xi.exp()
+            gamma[-1] = constraints.log_normalize(alpha[-1].logsumexp(1),0).exp()
             for t in reversed(range(seq_len-1)):
-                gamma[t] = gamma[t+1] + torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=1)
-                print(f'gamma is {constraints.log_normalize(gamma[t].log(),dim=0)}',gamma[t])
+                gamma[t] = torch.clamp(gamma[t+1] + torch.sum(xi_real[t] - xi_real[t].transpose(-2,-1),dim=0),min=0.0,max=1.0)
 
-            gamma_vec.append(constraints.log_normalize(gamma.log(),dim=1))
-            xi_vec.append(constraints.log_normalize(log_xi,(1,2)))
+            xi_vec.append(normed_xi)
+            eta_vec.append(normed_eta)
+            gamma_vec.append(constraints.log_normalize(gamma.log(),1))
 
-        #log_xi = self._xi(X,log_alpha,log_beta)
-        log_eta = self._eta(X,log_alpha,log_beta)
-        #log_gamma = self._gamma(X,log_alpha,log_xi)
-
-        return gamma_vec, xi_vec, log_eta
+        return gamma_vec, xi_vec, eta_vec
 
     def _estimate_model_params(self, X:utils.Observations, theta:Optional[utils.ContextualVariables]) -> nn.ParameterDict:
         """Compute the updated parameters for the model."""

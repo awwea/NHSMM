@@ -1,9 +1,6 @@
 import os
-import setuptools #type: ignore
+import setuptools
 from configparser import ConfigParser
-from pkg_resources import parse_version #type: ignore
-
-assert parse_version(setuptools.__version__) >= parse_version('36.2')
 
 
 class CleanCommand(setuptools.Command):
@@ -28,14 +25,14 @@ py_versions = '3.5 3.6 3.7 3.8 3.9 3.10 3.11'.split()
 statuses = ['1 - Planning', '2 - Pre-Alpha', '3 - Alpha', '4 - Beta',
             '5 - Production/Stable', '6 - Mature', '7 - Inactive']
 
-cfg_keys = 'description keywords author author_email license version url language'.split()
+cfg_keys = 'description keywords author author_email license version url'.split()
 setup_cfg = {o: cfg[o] for o in cfg_keys}
 
 with open('requirements.txt',) as f:
     requirements = f.readlines()
 
 setuptools.setup(
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(exclude=('tests', 'docs')),
     test_suite='tests',
     install_requires=requirements,
     setup_requires=requirements,
@@ -48,8 +45,7 @@ setuptools.setup(
     },
     classifiers=['Development Status :: ' + statuses[int(cfg['status'])],
                  'Intended Audience :: ' + cfg['audience'].title(),
-                 'License :: ' + cfg['license'],
-                 'Natural Language :: ' + cfg['language'].title()] +
+                 'License :: ' + cfg['license']] +
                 ['Programming Language :: Python :: ' + o for o in
                  py_versions[py_versions.index(min_python):]],
     **setup_cfg)

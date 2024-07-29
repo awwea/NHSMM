@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
 
-from chadhmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler # type: ignore
+from chadhmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler
 
 
 class BaseHMM(nn.Module,ABC):
@@ -286,8 +286,8 @@ class BaseHMM(nn.Module,ABC):
             trans_alpha = self.A.unsqueeze(0) + log_alpha[:-1].unsqueeze(-1)
             probs_beta = log_probs[1:] + log_beta[1:]
             
-            xi_vec.append(constraints.log_normalize(trans_alpha + probs_beta.unsqueeze(1),dim=(1,2)))
-            gamma_vec.append(constraints.log_normalize(log_alpha + log_beta,dim=1))
+            xi_vec.append(constraints.log_normalize(trans_alpha + probs_beta.unsqueeze(1),(1,2)))
+            gamma_vec.append(constraints.log_normalize(log_alpha + log_beta,1))
 
         return gamma_vec, xi_vec
     

@@ -1,6 +1,6 @@
 from typing import Optional
 import torch
-from torch.distributions import Multinomial # type: ignore
+from torch.distributions import Multinomial
 
 from chadhmm.hmm.BaseHMM import BaseHMM
 from chadhmm.utilities import utils, constraints

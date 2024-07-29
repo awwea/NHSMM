@@ -1,8 +1,7 @@
 from typing import Optional
 import torch
-import torch.nn as nn
 from torch.distributions import MultivariateNormal, MixtureSameFamily, Categorical
-from sklearn.cluster import KMeans # type: ignore
+from sklearn.cluster import KMeans
 
 from chadhmm.hsmm.BaseHSMM import BaseHSMM
 from chadhmm.utilities import utils, constraints
@@ -56,15 +55,9 @@ class GaussianMixtureHSMM(BaseHSMM):
         
     @property
     def dof(self):
-        return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self.params.means.numel() + self.params.covs.numel()
+        return self.n_states**2 - 1 + self.n_states*self.n_components - self.n_states + self.pdf.component_distribution.loc.numel() + self.pdf.covariance_matrix.numel()
     
-    @property
-    def pdf(self) -> MixtureSameFamily:
-        """Return the emission distribution for Gaussian Mixture Distribution."""
-        return MixtureSameFamily(Categorical(logits=self._params.weights),
-                                 MultivariateNormal(self._params.means,self._params.covs))
-    
-    def sample_emission_params(self,X=None):
+    def sample_emission_pdf(self,X=None):
         weights = torch.log(constraints.sample_probs(self.alpha,(self.n_states,self.n_components)))
         if X is not None:
             means = self._sample_kmeans(X) if self.k_means else X.mean(dim=0,keepdim=True).expand(self.n_states,self.n_components,-1).clone()
@@ -77,34 +70,39 @@ class GaussianMixtureHSMM(BaseHSMM):
             covs = self.min_covar + torch.eye(n=self.n_features, 
                                               dtype=torch.float64).expand((self.n_states, self.n_components, self.n_features, self.n_features)).clone()
 
-        return nn.ParameterDict({
-            'weights':nn.Parameter(weights,requires_grad=False),
-            'means':nn.Parameter(means,requires_grad=False),
-            'covs':nn.Parameter(covs,requires_grad=False)
-        })
+        return MixtureSameFamily(
+                Categorical(logits=weights),
+                MultivariateNormal(loc=means,covariance_matrix=covs)
+            )
     
-    def estimate_emission_params(self,X,posterior,theta):
+    def _estimate_emission_pdf(self,X,posterior,theta):
         responsibilities = self._compute_log_responsibilities(X).exp()
-        posterior_resp = responsibilities.permute(1,2,0) * posterior.unsqueeze(-2)
+        posterior_resp = responsibilities.permute(1,2,0) * posterior.T.unsqueeze(-2)
 
-        return nn.ParameterDict({
-            'weights':nn.Parameter(constraints.log_normalize(torch.log(posterior_resp.sum(-1))),requires_grad=False),
-            'means':nn.Parameter(self._compute_means(X,posterior_resp,theta),requires_grad=False),
-            'covs':nn.Parameter(self._compute_covs(X,posterior_resp,theta),requires_grad=False)
-        })
+        new_weights = constraints.log_normalize(torch.log(posterior_resp.sum(-1)))
+        new_means = self._compute_means(X,posterior_resp,theta)
+        new_covs = self._compute_covs(X,posterior_resp,new_means,theta)
+
+        return MixtureSameFamily(
+            Categorical(logits=new_weights),
+            MultivariateNormal(loc=new_means,covariance_matrix=new_covs)
+        )
     
     def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
         """Sample cluster means from K Means algorithm"""
-        k_means_alg = KMeans(n_clusters=self.n_states, 
-                             random_state=seed, 
-                             n_init="auto").fit(X)
+        k_means_alg = KMeans(
+            n_clusters=self.n_states, 
+            random_state=seed, 
+            n_init="auto"
+        ).fit(X)
+
         return torch.from_numpy(k_means_alg.cluster_centers_).reshape(self.n_states,self.n_components,self.n_features)
     
     def _compute_log_responsibilities(self, X:torch.Tensor) -> torch.Tensor:
         """Compute the responsibilities for each component."""
         X_expanded = X.unsqueeze(-2).unsqueeze(-2)
         component_log_probs = self.pdf.component_distribution.log_prob(X_expanded)
-        log_responsibilities = constraints.log_normalize(self._params.weights.unsqueeze(0) + component_log_probs)
+        log_responsibilities = constraints.log_normalize(self.pdf.mixture_distribution.logits.unsqueeze(0) + component_log_probs)
         return log_responsibilities
     
     def _compute_means(self,
@@ -124,6 +122,7 @@ class GaussianMixtureHSMM(BaseHSMM):
     def _compute_covs(self,
                       X:torch.Tensor,
                       posterior:torch.Tensor,
+                      new_means:torch.Tensor,
                       theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
         """Compute the covariances for each component."""
         if theta is not None:
@@ -131,7 +130,7 @@ class GaussianMixtureHSMM(BaseHSMM):
             raise NotImplementedError('Contextualized emissions not implemented for GaussianMixtureHMM')
         else:
             posterior_adj = posterior.unsqueeze(-1)
-            diff = X.unsqueeze(0).expand(self.n_states,self.n_components,-1,-1) - self._params.means.unsqueeze(-2)
+            diff = X.unsqueeze(0).expand(self.n_states,self.n_components,-1,-1) - new_means.unsqueeze(-2)
             new_covs = torch.transpose(diff * posterior_adj,-1,-2) @ diff
             new_covs /= posterior_adj.sum(-2,keepdim=True)
        

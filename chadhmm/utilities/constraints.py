@@ -75,7 +75,7 @@ def is_valid_A(logits:torch.Tensor,
 
 def log_normalize(matrix:torch.Tensor, dim:Union[int,Tuple[int,...]]=1) -> torch.Tensor:
     """Normalize a posterior probability matrix"""
-    return matrix - matrix.logsumexp(dim,True)      
+    return matrix - matrix.logsumexp(dim,True)
     
 def validate_lambdas(lambdas: torch.Tensor, n_states: int, n_features: int) -> torch.Tensor:
     """Do basic checks on matrix mean sizes and values"""
