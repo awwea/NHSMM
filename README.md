@@ -1,5 +1,6 @@
 # Chad Hidden Markov Models (ChadHMM)
 [![GitHub license](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/drkostas/pyemail-sender/master/LICENSE)
+![Downloads](https://img.shields.io/pypi/dm/chadhmm?color=purple)
 
 > **NOTE:**
 > This package is still in its early stages, documentation might not reflect every method mentioned above, please feel free to contribute and make this more coherent.
