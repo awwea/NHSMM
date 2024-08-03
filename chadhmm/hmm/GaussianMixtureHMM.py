@@ -59,6 +59,10 @@ class GaussianMixtureHMM(BaseHMM):
         self.covariance_type = covariance_type
         self.k_means = k_means
         super().__init__(n_states,transitions,alpha,seed)
+
+    @property
+    def pdf(self) -> MixtureSameFamily:
+        return self._params.emission_pdf
         
     @property
     def dof(self):

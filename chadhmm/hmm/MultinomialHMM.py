@@ -55,10 +55,14 @@ class MultinomialHMM(BaseHMM):
         super().__init__(n_states,transitions,alpha,seed)
 
     @property
+    def pdf(self) -> Multinomial:
+        return self._params.emission_pdf
+
+    @property
     def dof(self):
         return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1 
 
-    def sample_emission_pdf(self,X=None):
+    def sample_emission_pdf(self,X=None) -> Multinomial:
         if X is not None:
             emission_freqs = torch.bincount(X) / X.shape[0]
             emission_matrix = torch.log(emission_freqs.expand(self.n_states,-1))

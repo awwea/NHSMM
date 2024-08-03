@@ -42,6 +42,10 @@ class PoissonHMM(BaseHMM):
         super().__init__(n_states,transitions,alpha,seed)
 
     @property
+    def pdf(self) -> Independent:
+        return self._params.emission_pdf
+
+    @property
     def dof(self):
         return self.n_states ** 2 + self.n_states * self.n_features - self.n_states - 1 + self.pdf.rates.numel()
 
@@ -49,8 +53,10 @@ class PoissonHMM(BaseHMM):
         if X is not None:
             rates = X.mean(dim=0).expand(self.n_states,-1).clone()
         else:
-            rates = torch.ones(size=(self.n_states, self.n_features), 
-                               dtype=torch.float64)
+            rates = torch.ones(
+                size=(self.n_states, self.n_features), 
+                dtype=torch.float64
+            )
 
         return Independent(Poisson(rates),1)
 

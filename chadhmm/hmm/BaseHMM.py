@@ -54,8 +54,9 @@ class BaseHMM(nn.Module,ABC):
         self._params.pi.logits = logits
 
     @property
+    @abstractmethod
     def pdf(self) -> Any:
-        return self._params.emission_pdf
+        pass
     
     @property 
     @abstractmethod
@@ -90,7 +91,7 @@ class BaseHMM(nn.Module,ABC):
     def map_emission(self, x:torch.Tensor) -> torch.Tensor:
         """Get emission probabilities for a given sequence of observations."""
         pdf_shape = self.pdf.batch_shape + self.pdf.event_shape
-        b_size = torch.Size([torch.atleast_2d(x).size(0)]) + pdf_shape
+        b_size = torch.Size([x.shape[0]]) + pdf_shape
         x_batched = x.unsqueeze(-len(pdf_shape)).expand(b_size)
         return self.pdf.log_prob(x_batched).squeeze()
 
