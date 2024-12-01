@@ -39,15 +39,17 @@ class GaussianHMM(BaseHMM):
         Random seed to use for reproducible results.
     """
     
-    def __init__(self,
-                 n_states:int,
-                 n_features:int,
-                 transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
-                 covariance_type:constraints.CovarianceType = constraints.CovarianceType.FULL,
-                 alpha:float = 1.0,
-                 k_means:bool = False,
-                 min_covar:float = 1e-3,
-                 seed:Optional[int] = None):
+    def __init__(
+        self,
+        n_states:int,
+        n_features:int,
+        transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
+        covariance_type:constraints.CovarianceType = constraints.CovarianceType.FULL,
+        alpha:float = 1.0,
+        k_means:bool = False,
+        min_covar:float = 1e-3,
+        seed:Optional[int] = None
+        ):
 
         self.n_features = n_features
         self.k_means = k_means
@@ -81,45 +83,77 @@ class GaussianHMM(BaseHMM):
         new_covs = self._compute_covs(X,posterior,new_means,theta)
         return MultivariateNormal(new_means,new_covs)
 
-    def _sample_kmeans(self, X:torch.Tensor, seed:Optional[int]=None) -> torch.Tensor:
-        """Sample cluster means from K Means algorithm"""
-        k_means_alg = KMeans(
-            n_clusters=self.n_states, 
-            random_state=seed, 
-            n_init="auto"
-        ).fit(X)
+    def _sample_kmeans(self, X: torch.Tensor, seed: Optional[int] = None) -> torch.Tensor:
+        """Improved K-means initialization with multiple attempts."""
+        best_inertia = float('inf')
+        best_centers = None
         
-        return torch.from_numpy(k_means_alg.cluster_centers_).reshape(self.n_states,self.n_features)
+        n_attempts = 3
+        for _ in range(n_attempts):
+            k_means = KMeans(
+                n_clusters=self.n_states,
+                random_state=seed,
+                n_init="auto"
+            ).fit(X.cpu().numpy())
+            
+            if k_means.inertia_ < best_inertia:
+                best_inertia = k_means.inertia_
+                best_centers = k_means.cluster_centers_
 
-    def _compute_means(self,
-                       X:torch.Tensor,
-                       posterior:torch.Tensor,
-                       theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
-        """Compute the means for each hidden state"""
-        if theta is not None:
-            # TODO: matmul shapes are inconsistent 
-            raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
-        else:
-            new_mean = posterior.T @ X
-            new_mean /= posterior.T.sum(-1,keepdim=True)
+        centers_reshaped = torch.from_numpy(best_centers).to(X.device).reshape(self.n_states,self.n_features)
+        return centers_reshaped
 
+    @staticmethod
+    @torch.jit.script
+    def _compute_means_jit(
+        X: torch.Tensor, 
+        posterior: torch.Tensor
+        ) -> torch.Tensor:
+        """JIT-compiled mean computation."""
+        new_mean = torch.matmul(posterior.T, X)
+        new_mean /= posterior.sum(dim=0).unsqueeze(-1)
         return new_mean
-    
-    def _compute_covs(self, 
-                      X:torch.Tensor,
-                      posterior:torch.Tensor,
-                      new_means:torch.Tensor,
-                      theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
+
+    @staticmethod
+    @torch.jit.script
+    def _compute_covs_jit(
+        X: torch.Tensor,
+        posterior: torch.Tensor,
+        new_means: torch.Tensor,
+        min_covar: float,
+        n_features: int
+        ) -> torch.Tensor:
+        """JIT-compiled covariance computation."""
+        posterior_adj = posterior.T.unsqueeze(-1)
+        diff = X.unsqueeze(0) - new_means.unsqueeze(1)
+        new_covs = torch.matmul(posterior_adj * diff.transpose(-1, -2), diff)
+        new_covs /= posterior_adj.sum(-2, keepdim=True)
+        
+        # Add minimum covariance
+        new_covs += min_covar * torch.eye(n_features, 
+                                         device=X.device,
+                                         dtype=X.dtype)
+        return new_covs
+
+    def _compute_means(
+        self,
+        X: torch.Tensor,
+        posterior: torch.Tensor,
+        theta: Optional[utils.ContextualVariables] = None
+        ) -> torch.Tensor:
+        """Compute the means for each hidden state."""
+        if theta is not None:
+            raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
+        return self._compute_means_jit(X, posterior)
+
+    def _compute_covs(
+        self,
+        X: torch.Tensor,
+        posterior: torch.Tensor,
+        new_means: torch.Tensor,
+        theta: Optional[utils.ContextualVariables] = None
+        ) -> torch.Tensor:
         """Compute the covariances for each component."""
         if theta is not None:
-            # TODO: matmul shapes are inconsistent 
             raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
-        else:
-            # TODO: Uses old mean value of normal distribution, correct?
-            posterior_adj = posterior.T.unsqueeze(-1)
-            diff = X.expand(self.n_states,-1,-1) - new_means.unsqueeze(-2)
-            new_covs = torch.transpose(posterior_adj * diff,-1,-2) @ diff
-            new_covs /= posterior_adj.sum(-2,keepdim=True)
-
-        new_covs += self.min_covar * torch.eye(self.n_features)
-        return new_covs
+        return self._compute_covs_jit(X, posterior, new_means, self.min_covar, self.n_features)
