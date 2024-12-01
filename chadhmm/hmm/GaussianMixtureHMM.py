@@ -42,16 +42,18 @@ class GaussianMixtureHMM(BaseHMM):
     """
     __slots__ = 'n_components'
 
-    def __init__(self,
-                 n_states:int,
-                 n_features:int,
-                 n_components:int = 1,
-                 transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
-                 covariance_type:constraints.CovarianceType = constraints.CovarianceType.FULL,
-                 k_means:bool = False,
-                 alpha:float = 1.0,
-                 min_covar:float = 1e-3,
-                 seed:Optional[int] = None):
+    def __init__(
+        self,
+        n_states:int,
+        n_features:int,
+        n_components:int = 1,
+        transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
+        covariance_type:constraints.CovarianceType = constraints.CovarianceType.FULL,
+        k_means:bool = False,
+        alpha:float = 1.0,
+        min_covar:float = 1e-3,
+        seed:Optional[int] = None
+        ):
 
         self.n_features = n_features
         self.n_components = n_components
@@ -116,10 +118,12 @@ class GaussianMixtureHMM(BaseHMM):
         log_responsibilities = constraints.log_normalize(self.pdf.mixture_distribution.logits.unsqueeze(0) + component_log_probs)
         return log_responsibilities
     
-    def _compute_means(self,
-                       X:torch.Tensor, 
-                       posterior:torch.Tensor,
-                       theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
+    def _compute_means(
+        self,
+        X:torch.Tensor, 
+        posterior:torch.Tensor,
+        theta:Optional[utils.ContextualVariables] = None
+        ) -> torch.Tensor:
         """Compute the means for each hidden state"""
         if theta is not None:
             # TODO: matmul shapes are inconsistent
@@ -130,11 +134,13 @@ class GaussianMixtureHMM(BaseHMM):
 
         return new_mean
     
-    def _compute_covs(self,
-                      X:torch.Tensor,
-                      posterior:torch.Tensor,
-                      new_means:torch.Tensor,
-                      theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor:
+    def _compute_covs(
+        self,
+        X:torch.Tensor,
+        posterior:torch.Tensor,
+        new_means:torch.Tensor,
+        theta:Optional[utils.ContextualVariables] = None
+        ) -> torch.Tensor:
         """Compute the covariances for each component."""
         if theta is not None:
             # TODO: matmul shapes are inconsistent 

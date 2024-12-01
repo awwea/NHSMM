@@ -42,13 +42,15 @@ class MultinomialHMM(BaseHMM):
         Random seed for reproducibility.
     """
 
-    def __init__(self,
-                 n_states:int,
-                 n_features:int,
-                 n_trials:int = 1,
-                 transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
-                 alpha:float = 1.0,
-                 seed:Optional[int] = None):
+    def __init__(
+        self,
+        n_states:int,
+        n_features:int,
+        n_trials:int = 1,
+        transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
+        alpha:float = 1.0,
+        seed:Optional[int] = None
+        ):
         
         self.n_features = n_features
         self.n_trials = n_trials
@@ -75,10 +77,12 @@ class MultinomialHMM(BaseHMM):
         new_B = torch.log(self._compute_B(X,posterior,theta))
         return Multinomial(total_count=self.n_trials,logits=new_B)
 
-    def _compute_B(self,
-                   X:torch.Tensor,
-                   posterior:torch.Tensor,
-                   theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor: 
+    def _compute_B(
+        self,
+        X:torch.Tensor,
+        posterior:torch.Tensor,
+        theta:Optional[utils.ContextualVariables] = None
+        ) -> torch.Tensor: 
         """Compute the emission probabilities for each hidden state."""
         if theta is not None:
             #TODO: Implement contextualized emissions

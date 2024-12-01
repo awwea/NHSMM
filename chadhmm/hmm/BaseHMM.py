@@ -76,10 +76,12 @@ class BaseHMM(nn.Module,ABC):
         pass
 
     @abstractmethod
-    def _estimate_emission_pdf(self, 
-                               X:torch.Tensor, 
-                               posterior:torch.Tensor, 
-                               theta:Optional[utils.ContextualVariables]) -> Distribution:
+    def _estimate_emission_pdf(
+        self, 
+        X:torch.Tensor, 
+        posterior:torch.Tensor, 
+        theta:Optional[utils.ContextualVariables]
+        ) -> Distribution:
         """Update the emission parameters where posterior is of shape (n_states,n_samples)"""
         pass
         
@@ -87,6 +89,15 @@ class BaseHMM(nn.Module,ABC):
     def sample_emission_pdf(self, X:Optional[torch.Tensor]=None) -> Distribution:
         """Sample the emission parameters."""
         pass
+
+    def save_model(self, file_path: str) -> None:
+        """Save the model's state dictionary to a file."""
+        torch.save(self.state_dict(), file_path)
+
+    def load_model(self, file_path: str) -> None:
+        """Load the model's state dictionary from a file."""
+        self.load_state_dict(torch.load(file_path))
+        self.eval()
 
     def to(self, device: Union[str, torch.device]) -> T:
         """Move model to specified device (CPU/GPU).
@@ -98,8 +109,6 @@ class BaseHMM(nn.Module,ABC):
             device = torch.device(device)
         
         self._device = device
-        
-        # Move parameters to device
         for key, param in self._params.items():
             if hasattr(param, 'to'):
                 self._params[key] = param.to(device)
@@ -294,13 +303,14 @@ class BaseHMM(nn.Module,ABC):
             ValueError: If lengths don't sum to n_samples or algorithm is unknown.
             ValueError: If X contains values outside the support of the emission distribution.
         """
-        X_valid = self.to_observations(X,lengths)
-        if algorithm == 'map':
-            decoded_path = self._map(X_valid)
-        elif algorithm == 'viterbi':
-            decoded_path = self._viterbi(X_valid)
-        else:
-            raise ValueError(f'Unknown decoder algorithm {algorithm}')
+        with torch.inference_mode():
+            X_valid = self.to_observations(X,lengths)
+            if algorithm == 'map':
+                decoded_path = self._map(X_valid)
+            elif algorithm == 'viterbi':
+                decoded_path = self._viterbi(X_valid)
+            else:
+                raise ValueError(f'Unknown decoder algorithm {algorithm}')
         
         return decoded_path
 

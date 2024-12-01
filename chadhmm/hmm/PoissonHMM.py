@@ -31,12 +31,14 @@ class PoissonHMM(BaseHMM):
         Random seed for reproducibility.
     """
 
-    def __init__(self,
-                 n_states:int,
-                 n_features:int,
-                 transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
-                 alpha:float = 1.0,
-                 seed:Optional[int] = None):
+    def __init__(
+        self,
+        n_states:int,
+        n_features:int,
+        transitions:constraints.Transitions = constraints.Transitions.ERGODIC,
+        alpha:float = 1.0,
+        seed:Optional[int] = None
+        ):
         
         self.n_features = n_features
         super().__init__(n_states,transitions,alpha,seed)
@@ -64,10 +66,12 @@ class PoissonHMM(BaseHMM):
         new_rates = self._compute_rates(X,posterior,theta)
         return Independent(Poisson(new_rates),1)
 
-    def _compute_rates(self,
-                       X:torch.Tensor,
-                       posterior:torch.Tensor,
-                       theta:Optional[utils.ContextualVariables]) -> torch.Tensor:
+    def _compute_rates(
+        self,
+        X:torch.Tensor,
+        posterior:torch.Tensor,
+        theta:Optional[utils.ContextualVariables] = None
+        ) -> torch.Tensor:
         """Compute the rates for each hidden state"""
         if theta is not None:
             # TODO: matmul shapes are inconsistent 

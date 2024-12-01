@@ -8,9 +8,11 @@ from chadhmm.utilities import utils, constraints
 class MultinomialDist(Multinomial):
 
     def __init__(
-            self,
-            logits:torch.Tensor,
-            trials:int = 1):
+        self,
+        logits:torch.Tensor,
+        trials:int = 1
+        ):
+        
         super().__init__(total_count=trials,logits=logits)
 
     @property
@@ -18,12 +20,15 @@ class MultinomialDist(Multinomial):
         return self.batch_shape * (self.event_shape - 1)
     
     @classmethod
-    def sample_emission_pdf(cls,
-                            trials:int,
-                            batch_shape:int,
-                            event_shape:int,
-                            alpha:float=1.0,
-                            X:Optional[torch.Tensor]=None):
+    def sample_emission_pdf(
+        cls,
+        trials:int,
+        batch_shape:int,
+        event_shape:int,
+        alpha:float=1.0,
+        X:Optional[torch.Tensor] = None
+        ):
+        
         if X is not None:
             emission_freqs = torch.bincount(X) / X.shape[0]
             emission_matrix = torch.log(emission_freqs.expand(batch_shape,-1))
@@ -32,16 +37,21 @@ class MultinomialDist(Multinomial):
 
         return cls(emission_matrix,trials)
 
-    def _estimate_emission_pdf(self,
-                               X:torch.Tensor,
-                               posterior:torch.Tensor,
-                               theta:Optional[utils.ContextualVariables]=None):
+    def _estimate_emission_pdf(
+        self,
+        X:torch.Tensor,
+        posterior:torch.Tensor,
+        theta:Optional[utils.ContextualVariables] = None
+        ):
+        
         self.logits = torch.log(self._compute_B(X,posterior,theta))
 
-    def _compute_B(self,
-                   X:torch.Tensor,
-                   posterior:torch.Tensor,
-                   theta:Optional[utils.ContextualVariables]=None) -> torch.Tensor: 
+    def _compute_B(
+        self,
+        X:torch.Tensor,
+        posterior:torch.Tensor,
+        theta:Optional[utils.ContextualVariables] = None
+        ) -> torch.Tensor: 
         """Compute the emission probabilities for each hidden state."""
         if theta is not None:
             #TODO: Implement contextualized emissions

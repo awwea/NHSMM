@@ -64,6 +64,80 @@ class GaussianHMM(BaseHMM):
     @property
     def dof(self):
         return self.n_states**2 - 1 + self.pdf.loc.numel() + self.pdf.covariance_matrix.numel()
+    
+    def summary(self) -> dict:
+        """
+        Get a summary of the model's parameters and statistics.
+        
+        Returns:
+            dict: Dictionary containing model information including:
+                - Model type
+                - Number of states
+                - Number of features
+                - Transition type
+                - Covariance type
+                - Degrees of freedom
+                - Parameters per component
+                - Memory usage estimate
+                - Model configuration
+        """
+        # Calculate memory usage (approximate)
+        param_bytes = (
+            self.pdf.loc.numel() * 8 + 
+            self.pdf.covariance_matrix.numel() * 8 +  
+            self.initial_probs.numel() * 8 + 
+            self.transition_probs.numel() * 8 
+        )
+        memory_mb = param_bytes / (1024 * 1024)
+        
+        # Parameters per component
+        params_per_component = {
+            'means': self.n_features,
+            'covariances': {
+                constraints.CovarianceType.FULL: self.n_features * self.n_features,
+                constraints.CovarianceType.DIAG: self.n_features,
+                constraints.CovarianceType.SPHERICAL: 1
+            }[self.covariance_type]
+        }
+        
+        return {
+            'model_type': 'Gaussian HMM',
+            'n_states': self.n_states,
+            'n_features': self.n_features,
+            'transition_type': self._A_type,
+            'covariance_type': self.covariance_type.name,
+            'degrees_of_freedom': self.dof,
+            'parameters_per_component': params_per_component,
+            'memory_usage_mb': f"{memory_mb:.2f}",
+            'configuration': {
+                'k_means_init': self.k_means,
+                'min_covar': self.min_covar,
+                'alpha': self.alpha
+            },
+            'current_parameters': {
+                'mean_range': {
+                    'min': float(self.pdf.loc.min()),
+                    'max': float(self.pdf.loc.max())
+                },
+                'covariance_range': {
+                    'min': float(self.pdf.covariance_matrix.min()),
+                    'max': float(self.pdf.covariance_matrix.max())
+                }
+            }
+        }
+    
+    def __str__(self) -> str:
+        """
+        Returns a string representation of the model.
+        """
+        summary_dict = self.summary()
+
+        return (
+            f"GaussianHMM(n_states={summary_dict['n_states']}, "
+            f"n_features={summary_dict['n_features']}, "
+            f"transitions={summary_dict['transition_type']}, "
+            f"covariance_type={summary_dict['covariance_type']})"
+        )
  
     def sample_emission_pdf(self,X=None):
         if X is not None:
@@ -144,6 +218,7 @@ class GaussianHMM(BaseHMM):
         """Compute the means for each hidden state."""
         if theta is not None:
             raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
+        
         return self._compute_means_jit(X, posterior)
 
     def _compute_covs(
@@ -156,4 +231,5 @@ class GaussianHMM(BaseHMM):
         """Compute the covariances for each component."""
         if theta is not None:
             raise NotImplementedError('Contextualized emissions not implemented for GaussianHMM')
+        
         return self._compute_covs_jit(X, posterior, new_means, self.min_covar, self.n_features)
