@@ -1,9 +1,10 @@
+# PoissonHSMM
 from typing import Optional
 import torch
 from torch.distributions import Poisson, Independent
 
-from chadhmm.hsmm.BaseHSMM import BaseHSMM
-from chadhmm.utilities import utils
+from nhsmm.hsmm.BaseHSMM import BaseHSMM
+from nhsmm.utilities import utils
 
 
 class PoissonHSMM(BaseHSMM):

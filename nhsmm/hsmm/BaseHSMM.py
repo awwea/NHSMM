@@ -1,10 +1,11 @@
+# BaseHSMM
 from abc import ABC, abstractmethod
 from typing import Optional, List, Tuple, Any, Literal
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
 
-from chadhmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler
+from nhsmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler
 
 
 class BaseHSMM(nn.Module,ABC):

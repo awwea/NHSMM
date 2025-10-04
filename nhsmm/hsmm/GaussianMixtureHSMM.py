@@ -1,10 +1,11 @@
+# GaussianMixtureHSMM
 from typing import Optional
 import torch
 from torch.distributions import MultivariateNormal, MixtureSameFamily, Categorical
 from sklearn.cluster import KMeans
 
-from chadhmm.hsmm.BaseHSMM import BaseHSMM
-from chadhmm.utilities import utils, constraints
+from nhsmm.hsmm.BaseHSMM import BaseHSMM
+from nhsmm.utilities import utils, constraints
 
 
 class GaussianMixtureHSMM(BaseHSMM):

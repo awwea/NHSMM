@@ -1,9 +1,10 @@
+# MultinomialHSMM
 from typing import Optional
 import torch
 from torch.distributions import Multinomial
 
-from chadhmm.hsmm.BaseHSMM import BaseHSMM
-from chadhmm.utilities import utils, constraints
+from nhsmm.hsmm.BaseHSMM import BaseHSMM
+from nhsmm.utilities import utils, constraints
 
 
 class MultinomialHSMM(BaseHSMM):
