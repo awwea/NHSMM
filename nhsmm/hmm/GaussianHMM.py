@@ -3,8 +3,8 @@ import torch
 from torch.distributions import MultivariateNormal
 from sklearn.cluster import KMeans
 
-from chadhmm.hmm.BaseHMM import BaseHMM
-from chadhmm.utilities import utils, constraints
+from nhsmm.hmm.BaseHMM import BaseHMM
+from nhsmm.utilities import utils, constraints
 
 
 class GaussianHMM(BaseHMM):

@@ -2,7 +2,7 @@ import unittest
 import torch
 from torch.nn import ParameterDict, Parameter
 from torch.distributions import Distribution
-from chadhmm.hmm import MultinomialHMM #type:ignore
+from nhsmm.hmm import MultinomialHMM #type:ignore
 
 
 class MyTestCase(unittest.TestCase):

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import Categorical, Distribution
 
-from chadhmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler
+from nhsmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler
 
 T = TypeVar('T', bound='BaseHMM')
 
