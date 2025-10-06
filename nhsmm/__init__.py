@@ -9,7 +9,7 @@ If you have any suggestions, please let me know. I'm open to all ideas.
 """
 
 from .hmm import MultinomialHMM, GaussianHMM, GaussianMixtureHMM, PoissonHMM
-from .hsmm import MultinomialHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM
+from .hsmm import MultinomialHSMM, GaussianHSMM, GaussianMixtureHSMM, PoissonHSMM, NeuralHSMM
 from .utilities import utils, constraints, SeedGenerator, ConvergenceHandler
 
 
@@ -22,6 +22,7 @@ __all__ = [
     'PoissonHSMM',
     'GaussianMixtureHMM',
     'GaussianMixtureHSMM',
+    'NeuralHSMM',
     'utils',
     'constraints',
     'SeedGenerator',
