@@ -7,7 +7,7 @@ from .seed import SeedGenerator
 
 __all__ = [
     'constraints', 
-    'utils',
     'ConvergenceHandler', 
-    'SeedGenerator'
+    'SeedGenerator',
+    'utils',
 ]

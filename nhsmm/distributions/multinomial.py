@@ -1,4 +1,4 @@
-from typing import Optional, Callable
+from typing import Optional
 import torch
 from torch import nn
 from torch.distributions import Multinomial
@@ -9,19 +9,9 @@ from nhsmm.utilities import utils, constraints
 class NeuralMultinomialDist(Multinomial):
     """
     Neural Multinomial emission distribution for discrete HSMM observations.
-    Supports contextual (neural) emission logits via CNN/LSTM encoders.
 
-    Parameters
-    ----------
-    logits : torch.Tensor
-        Logits defining the categorical probabilities per hidden state.
-    trials : int, default=1
-        Number of trials for multinomial sampling.
-    encoder : Optional[nn.Module], default=None
-        Optional neural encoder (e.g., CNN, LSTM, Transformer)
-        that produces state-dependent logits given contextual input.
-    context_mode : str, default="none"
-        One of {"none", "temporal", "spatial"} defining context type.
+    Extends torch.distributions.Multinomial with optional neural context encoders
+    for state-conditional emission logits.
     """
 
     def __init__(
@@ -34,6 +24,8 @@ class NeuralMultinomialDist(Multinomial):
         super().__init__(total_count=trials, logits=logits)
         self.encoder = encoder
         self.context_mode = context_mode
+        if context_mode not in {"none", "temporal", "spatial"}:
+            raise ValueError(f"Invalid context_mode '{context_mode}'")
 
     @property
     def dof(self) -> int:
@@ -44,24 +36,26 @@ class NeuralMultinomialDist(Multinomial):
     def sample_emission_pdf(
         cls,
         trials: int,
-        batch_shape: int,
-        event_shape: int,
+        n_states: int,
+        n_categories: int,
         alpha: float = 1.0,
         X: Optional[torch.Tensor] = None,
         encoder: Optional[nn.Module] = None,
         context_mode: str = "none",
-    ):
-        """Sample or initialize emission logits (supports encoder injection)."""
+    ) -> "NeuralMultinomialDist":
+        """
+        Sample or initialize emission logits (supports encoder injection).
+        """
         eps = 1e-8
         if X is not None:
-            if X.ndim > 1 and X.shape[-1] == event_shape:
+            if X.ndim > 1 and X.shape[-1] == n_categories:
                 emission_freqs = X.sum(dim=0) / X.sum()
             else:
-                emission_freqs = torch.bincount(X.long(), minlength=event_shape).float()
+                emission_freqs = torch.bincount(X.long(), minlength=n_categories).float()
                 emission_freqs /= emission_freqs.sum()
-            emission_matrix = emission_freqs.clamp_min(eps).log().unsqueeze(0).expand(batch_shape, -1)
+            emission_matrix = emission_freqs.clamp_min(eps).log().unsqueeze(0).expand(n_states, -1)
         else:
-            probs = constraints.sample_probs(alpha, (batch_shape, event_shape))
+            probs = constraints.sample_probs(alpha, (n_states, n_categories))
             emission_matrix = probs.clamp_min(eps).log()
 
         return cls(
@@ -96,29 +90,19 @@ class NeuralMultinomialDist(Multinomial):
         )
 
     def _contextual_logits(self, X: torch.Tensor, theta: utils.ContextualVariables) -> torch.Tensor:
-        """
-        Compute emission logits using neural encoder and contextual variables.
-        Expected: theta.X is tuple of tensors, matching encoder input format.
-        """
+        """Compute emission logits using neural encoder and contextual variables."""
         if not callable(self.encoder):
             raise ValueError("Encoder must be a callable nn.Module.")
 
-        # Feed contextual data into neural encoder
-        if isinstance(theta.X, tuple):
-            encoded = self.encoder(*theta.X)
-        else:
-            encoded = self.encoder(theta.X)
+        encoded = self.encoder(*theta.X) if isinstance(theta.X, tuple) else self.encoder(theta.X)
+        if encoded.shape[-1] != self.event_shape[0]:
+            raise ValueError(f"Encoder output dim {encoded.shape[-1]} != event_shape {self.event_shape[0]}")
 
-        # Output normalization
-        logits = torch.log_softmax(encoded, dim=-1)
-        return logits
+        return torch.log_softmax(encoded, dim=-1)
 
-    def _compute_B(
-        self,
-        X: torch.Tensor,
-        posterior: torch.Tensor,
-    ) -> torch.Tensor:
+    def _compute_B(self, X: torch.Tensor, posterior: torch.Tensor) -> torch.Tensor:
         """Compute expected emission probabilities per hidden state."""
         weighted_counts = posterior.T @ X
-        weighted_counts /= weighted_counts.sum(dim=1, keepdim=True)
+        denom = weighted_counts.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        weighted_counts /= denom
         return weighted_counts
