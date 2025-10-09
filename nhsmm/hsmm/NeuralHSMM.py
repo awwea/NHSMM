@@ -14,41 +14,113 @@ from nhsmm.utilities import utils
 # Default modules (pluggable)
 # -----------------------------
 class DefaultEmission(nn.Module):
-    """Gaussian emissions per state (pluggable)."""
-    def __init__(self, n_states, n_features, min_covar=1e-3):
+    """
+    Gaussian emission model with optional generic context modulation.
+    Supports per-state parameters and context vector (continuous or embedded).
+
+    Args:
+        n_states (int): Number of HSMM hidden states.
+        n_features (int): Feature dimensionality.
+        min_covar (float): Min variance for numerical stability.
+        context_dim (int, optional): Dimensionality of combined context vector.
+    """
+    def __init__(self, n_states, n_features, min_covar=1e-3, context_dim=None):
         super().__init__()
         self.n_states = n_states
         self.n_features = n_features
         self.min_covar = min_covar
+        self.context_dim = context_dim
+
         self.mu = nn.Parameter(torch.zeros(n_states, n_features, dtype=DTYPE))
         self.log_var = nn.Parameter(torch.zeros(n_states, n_features, dtype=DTYPE))
 
-    def forward(self, X=None):
-        var = F.softplus(self.log_var) + self.min_covar
-        return self.mu, var
+        if context_dim is not None:
+            self.context_net = nn.Sequential(
+                nn.Linear(context_dim, n_states * n_features),
+                nn.Tanh(),
+                nn.Linear(n_states * n_features, n_states * n_features)
+            )
+        else:
+            self.context_net = None
+
+    def forward(self, X: torch.Tensor = None, context: torch.Tensor = None):
+        mu, var = self.mu, F.softplus(self.log_var) + self.min_covar
+
+        if self.context_net is not None and context is not None:
+            delta = self.context_net(context).reshape(self.n_states, self.n_features)
+            mu = mu + 0.1 * torch.tanh(delta)
+
+        return mu, var
 
 
 class DefaultDuration(nn.Module):
-    """Optional covariate-conditioned duration module (pluggable)."""
-    def __init__(self, n_states, max_duration=20):
+    """
+    Learnable duration module with optional generic context.
+    Outputs per-state duration probabilities.
+
+    Args:
+        n_states (int): Number of hidden states.
+        max_duration (int): Maximum duration length.
+        context_dim (int, optional): Dimensionality of context vector.
+        temperature (float): Softmax scaling factor.
+    """
+    def __init__(self, n_states, max_duration=20, context_dim=None, temperature=1.0):
         super().__init__()
         self.n_states = n_states
         self.max_duration = max_duration
+        self.temperature = temperature
+
         self.logits = nn.Parameter(torch.zeros(n_states, max_duration, dtype=DTYPE))
 
-    def forward(self, covariates=None):
-        return F.softmax(self.logits, dim=-1)
+        if context_dim is not None:
+            self.context_net = nn.Sequential(
+                nn.Linear(context_dim, n_states * max_duration),
+                nn.Tanh(),
+                nn.Linear(n_states * max_duration, n_states * max_duration)
+            )
+        else:
+            self.context_net = None
+
+    def forward(self, context: torch.Tensor = None):
+        logits = self.logits
+        if self.context_net is not None and context is not None:
+            delta = self.context_net(context).reshape(self.n_states, self.max_duration)
+            logits = logits + 0.1 * torch.tanh(delta)
+        return F.softmax(logits / self.temperature, dim=-1)
 
 
 class DefaultTransition(nn.Module):
-    """Learnable transition matrix (pluggable)."""
-    def __init__(self, n_states):
+    """
+    Learnable transition matrix with optional generic context.
+    Outputs per-state transition probabilities.
+
+    Args:
+        n_states (int): Number of hidden states.
+        context_dim (int, optional): Dimensionality of context vector.
+        temperature (float): Softmax scaling factor.
+    """
+    def __init__(self, n_states, context_dim=None, temperature=1.0):
         super().__init__()
         self.n_states = n_states
+        self.temperature = temperature
+
         self.logits = nn.Parameter(torch.zeros(n_states, n_states, dtype=DTYPE))
 
-    def forward(self):
-        return F.softmax(self.logits, dim=-1)
+        if context_dim is not None:
+            self.context_net = nn.Sequential(
+                nn.Linear(context_dim, n_states * n_states),
+                nn.Tanh(),
+                nn.Linear(n_states * n_states, n_states * n_states)
+            )
+        else:
+            self.context_net = None
+
+    def forward(self, context: torch.Tensor = None):
+        logits = self.logits
+        if self.context_net is not None and context is not None:
+            delta = self.context_net(context).reshape(self.n_states, self.n_states)
+            logits = logits + 0.1 * torch.tanh(delta)
+        return F.softmax(logits / self.temperature, dim=-1)
 
 
 # -----------------------------
@@ -69,7 +141,7 @@ class NeuralHSMM(BaseHSMM, nn.Module):
     - `set_context(context)` / `clear_context()` to attach/detach a context vector.
     """
 
-    def __init__(self, n_states: int, max_duration: int, n_features: int, alpha: float = 1.0, seed: Optional[int] = None, encoder: Optional[nn.Module] = None, emission_type: str = "gaussian", min_covar: float = 1e-3, device: Optional[torch.device] = None, context_dim: Optional[int] = None):
+    def __init__(self, n_states: int, max_duration: int, n_features: int, alpha: float = 1.0, seed: Optional[int] = None, encoder: Optional[nn.Module] = None, emission_type: str = "gaussian", min_covar: float = 1e-3, device: Optional[torch.device] = None, context_dim: Optional[int] = None, **kwargs):
 
         nn.Module.__init__(self)
         self._params = {'emission_type': emission_type.lower()}
@@ -86,6 +158,14 @@ class NeuralHSMM(BaseHSMM, nn.Module):
         self.ctx_A: Optional[nn.Linear] = None
         self.ctx_D: Optional[nn.Linear] = None
         self.ctx_E: Optional[nn.Linear] = None
+
+        # Optional embedding for any categorical context (flexible)
+        self.context_embedding: Optional[nn.Embedding] = None
+        if context_dim is not None and kwargs.get('n_context_states', None) is not None:
+            n_ctx = kwargs['n_context_states']
+            self.context_embedding = nn.Embedding(n_ctx, context_dim)
+            nn.init.normal_(self.context_embedding.weight, mean=0.0, std=1e-3)
+
         if context_dim is not None:
             # create linear layers that map context -> required sizes.
             # We initialize them so they are near-zero (neutral) and cast to DTYPE.
@@ -112,9 +192,9 @@ class NeuralHSMM(BaseHSMM, nn.Module):
         self._params['emission_pdf'] = self.sample_emission_pdf()
 
         # Default pluggable modules
-        self.emission_module = DefaultEmission(n_states, n_features, min_covar)
-        self.duration_module = DefaultDuration(n_states, max_duration)
-        self.transition_module = DefaultTransition(n_states)
+        self.emission_module = DefaultEmission(n_states, n_features, min_covar, context_dim=context_dim)
+        self.duration_module = DefaultDuration(n_states, max_duration, context_dim=context_dim)
+        self.transition_module = DefaultTransition(n_states, context_dim=context_dim)
 
     # ----------------------
     # Properties
@@ -167,11 +247,7 @@ class NeuralHSMM(BaseHSMM, nn.Module):
             self._context = None
             return
 
-        ctx = context.detach()
-        if ctx.device != self.device:
-            ctx = ctx.to(device=self.device)
-        # cast to DTYPE
-        ctx = ctx.to(dtype=DTYPE)
+        ctx = context.detach().to(dtype=DTYPE, device=self.device)
         # if vector, keep as (1, D) for convenience
         if ctx.ndim == 1:
             ctx = ctx.unsqueeze(0)
@@ -259,73 +335,44 @@ class NeuralHSMM(BaseHSMM, nn.Module):
     # ----------------------
     # Contextual hooks
     # ----------------------
+    def _combine_context(self, theta: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        """Merge encoder output and stored context into a single vector."""
+        theta_combined = None
+        if theta is not None:
+            theta_combined = theta.mean(dim=0) if theta.dim() > 1 else theta
+            theta_combined = theta_combined.to(dtype=DTYPE, device=self.device)
+        if self._context is not None:
+            ctx_vec = self._context[0] if self._context.dim() > 1 else self._context
+            theta_combined = ctx_vec if theta_combined is None else torch.cat([theta_combined, ctx_vec], dim=0)
+        return theta_combined
+
     def _contextual_emission_pdf(
         self,
         X: utils.Observations,
         theta: Optional[torch.Tensor],
-        scale: float = 0.1  # optionally tune context influence
+        scale: float = 0.1
     ) -> Distribution:
-        """
-        Modulate emission distribution using contextual features `theta`.
-
-        Supports both Categorical and MultivariateNormal emissions.
-
-        Parameters
-        ----------
-        X : Observations
-            Input observations (unused here, but may be used in extensions).
-        theta : torch.Tensor, optional
-            Contextual features. If None, no modulation is applied.
-        scale : float, default=0.1
-            Scaling factor to prevent over-shifting of logits or means.
-
-        Returns
-        -------
-        Distribution
-            New emission distribution modulated by context.
-        """
+        """Modulate emission distribution using contextual features."""
         pdf = self.pdf
         if pdf is None:
             return pdf
 
-        # combine theta and self._context (if any)
-        # theta may be (batch, d) or (d,), self._context is (batch, d_ctx) or None
-        # We'll aggregate across batch if present.
-        theta_combined = None
-        if theta is not None:
-            tproj = theta.mean(dim=0) if theta.dim() > 1 else theta
-            theta_combined = tproj.to(dtype=DTYPE, device=self.device)
-        if self._context is not None:
-            # take first context vector if batch present
-            c = self._context[0] if self._context.dim() > 1 else self._context
-            if theta_combined is None:
-                theta_combined = c
-            else:
-                # concat for richer representation if both exist
-                theta_combined = torch.cat([theta_combined, c], dim=0)
-
-        # if nothing to do, return pdf unchanged
+        theta_combined = self._combine_context(theta)
         if theta_combined is None:
             return pdf
 
-        # Now apply modulation. Prefer learned projection if available; otherwise pad/truncate.
         if isinstance(pdf, Categorical):
             n_classes = pdf.logits.shape[-1]
             if self.ctx_E is not None:
-                # learned projection -> produce K*F shifts, but for categorical we only need per-class shift
-                ctx_out = self.ctx_E(theta_combined.unsqueeze(0)).squeeze(0)  # length K*F
-                # reduce to per-class by summing across features per class (safe fallback)
-                ctx_per_class = ctx_out.view(self.n_states, self.n_features).sum(dim=1)
-                delta = ctx_per_class[:n_classes]
+                ctx_out = self.ctx_E(theta_combined.unsqueeze(0)).squeeze(0)
+                delta = ctx_out.view(self.n_states, self.n_features).sum(dim=1)[:n_classes]
             else:
                 flat = theta_combined
                 if flat.numel() < n_classes:
-                    pad = torch.zeros(n_classes - flat.numel(), dtype=DTYPE, device=self.device)
-                    flat = torch.cat([flat, pad], dim=0)
+                    flat = torch.cat([flat, torch.zeros(n_classes - flat.numel(), dtype=DTYPE, device=self.device)])
                 delta = flat[:n_classes]
             delta = scale * torch.tanh(delta.to(dtype=pdf.logits.dtype, device=pdf.logits.device))
-            new_logits = pdf.logits + delta.unsqueeze(0).expand_as(pdf.logits)
-            return Categorical(logits=new_logits)
+            return Categorical(logits=pdf.logits + delta.unsqueeze(0).expand_as(pdf.logits))
 
         elif isinstance(pdf, MultivariateNormal):
             K, F = pdf.mean.shape
@@ -336,91 +383,51 @@ class NeuralHSMM(BaseHSMM, nn.Module):
             else:
                 flat = theta_combined
                 if flat.numel() < total_dim:
-                    pad = torch.zeros(total_dim - flat.numel(), dtype=DTYPE, device=self.device)
-                    flat = torch.cat([flat, pad], dim=0)
+                    flat = torch.cat([flat, torch.zeros(total_dim - flat.numel(), dtype=DTYPE, device=self.device)])
                 mean_shift = flat[:total_dim]
             mean_shift = scale * mean_shift.to(dtype=pdf.mean.dtype, device=pdf.mean.device).reshape(K, F)
-            new_mean = pdf.mean + mean_shift
-            return MultivariateNormal(loc=new_mean, covariance_matrix=pdf.covariance_matrix)
+            return MultivariateNormal(loc=pdf.mean + mean_shift, covariance_matrix=pdf.covariance_matrix)
 
         else:
             raise ValueError(f"Unsupported pdf type {type(pdf)}")
 
-    def _contextual_transition_matrix(self, theta: Optional[torch.Tensor]) -> torch.Tensor:
-        """
-        Contextually modulate transition probabilities using latent features `theta`.
-        Supports per-state adaptation via additive logit shifts.
-        """
-        base_logits = self.transition_module.logits.to(dtype=DTYPE, device=self.device)
-        # combine theta and stored context
-        theta_combined = None
-        if theta is not None:
-            theta_combined = theta.mean(dim=0) if theta.dim() > 1 else theta
-            theta_combined = theta_combined.to(dtype=DTYPE, device=self.device)
-        if self._context is not None:
-            c = self._context[0] if self._context.dim() > 1 else self._context
-            if theta_combined is None:
-                theta_combined = c
-            else:
-                theta_combined = torch.cat([theta_combined, c], dim=0)
 
+    def _contextual_transition_matrix(self, theta: Optional[torch.Tensor]) -> torch.Tensor:
+        """Contextually modulate transition probabilities."""
+        base_logits = self.transition_module.logits.to(dtype=DTYPE, device=self.device)
+        theta_combined = self._combine_context(theta)
         if theta_combined is None:
             return F.softmax(base_logits, dim=-1)
 
-        # If learned projection present, use it
-        if self.ctx_A is not None:
-            proj = self.ctx_A(theta_combined.unsqueeze(0)).squeeze(0)  # length nS*nS
-            delta = 0.1 * torch.tanh(proj).reshape(self.n_states, self.n_states)
-            out_logits = base_logits + delta.to(dtype=base_logits.dtype, device=base_logits.device)
-            return F.softmax(out_logits, dim=-1)
-
-        # Fallback: pad/truncate and reshape
-        flat = theta_combined
         n = self.n_states
-        need = n * n
-        if flat.numel() < need:
-            pad = torch.zeros(need - flat.numel(), dtype=DTYPE, device=self.device)
-            flat = torch.cat([flat, pad], dim=0)
-        delta = 0.1 * torch.tanh(flat[:need]).reshape(n, n)
-        out_logits = base_logits + delta.to(dtype=base_logits.dtype, device=base_logits.device)
-        return F.softmax(out_logits, dim=-1)
+        if self.ctx_A is not None:
+            proj = self.ctx_A(theta_combined.unsqueeze(0)).squeeze(0)
+            delta = 0.1 * torch.tanh(proj).reshape(n, n)
+        else:
+            flat = theta_combined
+            if flat.numel() < n * n:
+                flat = torch.cat([flat, torch.zeros(n * n - flat.numel(), dtype=DTYPE, device=self.device)])
+            delta = 0.1 * torch.tanh(flat[: n * n]).reshape(n, n)
+        return F.softmax(base_logits + delta.to(dtype=base_logits.dtype, device=base_logits.device), dim=-1)
+
 
     def _contextual_duration_pdf(self, theta: Optional[torch.Tensor]) -> torch.Tensor:
-        """
-        Contextually modulate duration distributions based on latent features `theta`.
-        Produces a per-state duration probability matrix.
-        """
+        """Contextually modulate per-state duration distributions."""
         base_logits = self.duration_module.logits.to(dtype=DTYPE, device=self.device)
-        theta_combined = None
-        if theta is not None:
-            theta_combined = theta.mean(dim=0) if theta.dim() > 1 else theta
-            theta_combined = theta_combined.to(dtype=DTYPE, device=self.device)
-        if self._context is not None:
-            c = self._context[0] if self._context.dim() > 1 else self._context
-            if theta_combined is None:
-                theta_combined = c
-            else:
-                theta_combined = torch.cat([theta_combined, c], dim=0)
-
+        theta_combined = self._combine_context(theta)
         if theta_combined is None:
             return F.softmax(base_logits, dim=-1)
 
         n_states, n_durations = base_logits.shape
-        need = n_states * n_durations
-
         if self.ctx_D is not None:
-            proj = self.ctx_D(theta_combined.unsqueeze(0)).squeeze(0)  # length n_states * n_durations
+            proj = self.ctx_D(theta_combined.unsqueeze(0)).squeeze(0)
             delta = 0.1 * torch.tanh(proj).reshape(n_states, n_durations)
-            out_logits = base_logits + delta.to(dtype=base_logits.dtype, device=base_logits.device)
-            return F.softmax(out_logits, dim=-1)
-
-        flat = theta_combined
-        if flat.numel() < need:
-            pad = torch.zeros(need - flat.numel(), dtype=DTYPE, device=self.device)
-            flat = torch.cat([flat, pad], dim=0)
-        delta = 0.1 * torch.tanh(flat[:need]).reshape(n_states, n_durations)
-        out_logits = base_logits + delta.to(dtype=base_logits.dtype, device=base_logits.device)
-        return F.softmax(out_logits, dim=-1)
+        else:
+            flat = theta_combined
+            if flat.numel() < n_states * n_durations:
+                flat = torch.cat([flat, torch.zeros(n_states * n_durations - flat.numel(), dtype=DTYPE, device=self.device)])
+            delta = 0.1 * torch.tanh(flat[: n_states * n_durations]).reshape(n_states, n_durations)
+        return F.softmax(base_logits + delta.to(dtype=base_logits.dtype, device=base_logits.device), dim=-1)
 
     # ----------------------
     # Encoder forward
@@ -453,35 +460,50 @@ class NeuralHSMM(BaseHSMM, nn.Module):
     # ----------------------
     # Forward / Predict
     # ----------------------
-    def forward(self, X: torch.Tensor, return_pdf: bool = False, context: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        X: torch.Tensor,
+        return_pdf: bool = False,
+        context: Optional[torch.Tensor] = None,
+        context_ids: Optional[torch.Tensor] = None
+    ):
         """
-        Encode observations and optionally return a context-modulated emission pdf.
-
-        Parameters
-        ----------
-        X : torch.Tensor
-            Input observations passed to encoder.
-        return_pdf : bool
-            If True, return the context-modulated emission Distribution.
-        context : Optional[torch.Tensor]
-            External context vector to set for this call (temporarily).
+        Forward pass with optional context:
+        - context: continuous context vector
+        - context_ids: discrete IDs to embed via self.context_embedding
         """
         prev_ctx = self._context
-        if context is not None:
-            self.set_context(context)
 
+        # Process discrete context IDs
+        ctx_emb = None
+        if context_ids is not None and hasattr(self, "context_embedding") and self.context_embedding is not None:
+            ctx_emb = self.context_embedding(context_ids)
+            if ctx_emb.ndim == 3:  # (batch, seq_len, embed_dim)
+                ctx_emb = ctx_emb.mean(dim=1)
+
+        # Merge continuous and embedded context
+        combined_ctx = None
+        if context is not None and ctx_emb is not None:
+            combined_ctx = torch.cat([context, ctx_emb], dim=-1)
+        elif context is not None:
+            combined_ctx = context
+        elif ctx_emb is not None:
+            combined_ctx = ctx_emb
+
+        if combined_ctx is not None:
+            self.set_context(combined_ctx)
+
+        # Encode observations
         theta = self.encode_observations(X)
+
         if return_pdf:
-            pdf = self._contextual_emission_pdf(X if isinstance(X, utils.Observations) else X, theta)
-            # restore context
-            if context is not None:
-                self._context = prev_ctx
+            pdf = self._contextual_emission_pdf(X, theta)
+            self._context = prev_ctx  # restore previous context
             return pdf
 
-        if context is not None:
-            # restore context
-            self._context = prev_ctx
+        self._context = prev_ctx  # restore previous context
         return theta
+
 
     def predict(self, X: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         return super().predict(X, *args, **kwargs)
