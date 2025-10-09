@@ -1,14 +1,14 @@
-from .MultinomialHSMM import MultinomialHSMM
-from .PoissonHSMM import PoissonHSMM
 from .GaussianHSMM import GaussianHSMM
 from .GaussianMixtureHSMM import GaussianMixtureHSMM
+from .MultinomialHSMM import MultinomialHSMM
 from .NeuralHSMM import NeuralHSMM
+from .PoissonHSMM import PoissonHSMM
 
 
 __all__ = [
-    'PoissonHSMM',
     'GaussianHSMM',
     'GaussianMixtureHSMM',
     'MultinomialHSMM',
-    'NeuralHSMM'
+    'NeuralHSMM',
+    'PoissonHSMM',
 ]
