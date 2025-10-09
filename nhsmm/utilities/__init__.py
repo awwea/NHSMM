@@ -1,8 +1,7 @@
 from . import constraints
-from . import utils
-
 from .convergence import ConvergenceHandler
 from .seed import SeedGenerator
+from . import utils
 
 
 __all__ = [
