@@ -1,7 +1,7 @@
 from . import constraints
 from . import utils
 
-from .convergence_handle import ConvergenceHandler
+from .convergence import ConvergenceHandler
 from .seed import SeedGenerator
 
 
