@@ -2,9 +2,10 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Optional, List, Tuple, Any, Literal, Dict
-import torch
-import torch.nn as nn
+
 from torch.distributions import Distribution, Categorical
+import torch.nn as nn
+import torch
 
 from nhsmm.utilities import utils, constraints, SeedGenerator, ConvergenceHandler
 
