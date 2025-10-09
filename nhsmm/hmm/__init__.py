@@ -5,8 +5,8 @@ from .GaussianMixtureHMM import GaussianMixtureHMM
 
 
 __all__ = [
-    'MultinomialHMM',
     'PoissonHMM',
     'GaussianHMM',
+    'MultinomialHMM',
     'GaussianMixtureHMM'
 ]

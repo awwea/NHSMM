@@ -335,17 +335,6 @@ class NeuralHSMM(BaseHSMM, nn.Module):
     # ----------------------
     # Contextual hooks
     # ----------------------
-    def _combine_context(self, theta: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
-        """Merge encoder output and stored context into a single vector."""
-        theta_combined = None
-        if theta is not None:
-            theta_combined = theta.mean(dim=0) if theta.dim() > 1 else theta
-            theta_combined = theta_combined.to(dtype=DTYPE, device=self.device)
-        if self._context is not None:
-            ctx_vec = self._context[0] if self._context.dim() > 1 else self._context
-            theta_combined = ctx_vec if theta_combined is None else torch.cat([theta_combined, ctx_vec], dim=0)
-        return theta_combined
-
     def _contextual_emission_pdf(
         self,
         X: utils.Observations,
@@ -391,7 +380,6 @@ class NeuralHSMM(BaseHSMM, nn.Module):
         else:
             raise ValueError(f"Unsupported pdf type {type(pdf)}")
 
-
     def _contextual_transition_matrix(self, theta: Optional[torch.Tensor]) -> torch.Tensor:
         """Contextually modulate transition probabilities."""
         base_logits = self.transition_module.logits.to(dtype=DTYPE, device=self.device)
@@ -409,7 +397,6 @@ class NeuralHSMM(BaseHSMM, nn.Module):
                 flat = torch.cat([flat, torch.zeros(n * n - flat.numel(), dtype=DTYPE, device=self.device)])
             delta = 0.1 * torch.tanh(flat[: n * n]).reshape(n, n)
         return F.softmax(base_logits + delta.to(dtype=base_logits.dtype, device=base_logits.device), dim=-1)
-
 
     def _contextual_duration_pdf(self, theta: Optional[torch.Tensor]) -> torch.Tensor:
         """Contextually modulate per-state duration distributions."""
@@ -503,7 +490,6 @@ class NeuralHSMM(BaseHSMM, nn.Module):
 
         self._context = prev_ctx  # restore previous context
         return theta
-
 
     def predict(self, X: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         return super().predict(X, *args, **kwargs)

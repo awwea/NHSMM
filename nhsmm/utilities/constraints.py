@@ -42,10 +42,12 @@ def sample_A(prior: float, n_states: int, A_type: Transitions) -> torch.Tensor:
         probs.fill_diagonal_(0.0)
     elif A_type == Transitions.LEFT_TO_RIGHT:
         probs = torch.triu(probs)
-        # ensure each row sums > 0
+        # ensure no zero rows
         zero_rows = probs.sum(-1) == 0
         if zero_rows.any():
-            probs[zero_rows, zero_rows] = 1.0
+            idxs = zero_rows.nonzero(as_tuple=True)[0]
+            for i in idxs:
+                probs[i, i] = 1.0
     else:
         raise NotImplementedError(f"Unsupported Transition type: {A_type}")
 
@@ -59,14 +61,14 @@ def compute_information_criteria(
     samples: int, log_likelihood: torch.Tensor, dof: int, criterion: InformCriteria
 ) -> torch.Tensor:
     """Compute AIC, BIC, or HQC given log-likelihood and degrees of freedom."""
-    log_s = torch.log(torch.tensor(float(samples), dtype=torch.float64))
-    if criterion == InformCriteria.AIC:
-        penalty = 2.0 * dof
-    elif criterion == InformCriteria.BIC:
-        penalty = dof * log_s
-    elif criterion == InformCriteria.HQC:
-        penalty = 2.0 * dof * torch.log(log_s)
-    else:
+    n = float(samples)
+    log_s = torch.log(torch.tensor(n, dtype=torch.float64))
+    penalty = {
+        InformCriteria.AIC: 2.0 * dof,
+        InformCriteria.BIC: dof * log_s,
+        InformCriteria.HQC: 2.0 * dof * torch.log(log_s)
+    }.get(criterion, None)
+    if penalty is None:
         raise ValueError(f"Invalid information criterion: {criterion.value}")
     return -2.0 * log_likelihood + penalty
 
@@ -76,11 +78,10 @@ def compute_information_criteria(
 # -------------------------------------------------------------------------
 def is_valid_A(probs: torch.Tensor, A_type: Transitions) -> bool:
     """Check if a transition matrix is valid under a given topology."""
-    if not torch.isfinite(probs).all() or torch.any(probs < 0):
+    if not torch.isfinite(probs).all() or (probs < 0).any():
         return False
 
-    row_sum_ok = torch.allclose(probs.sum(-1), torch.ones(probs.size(0), device=probs.device), atol=1e-6)
-    if not row_sum_ok:
+    if not torch.allclose(probs.sum(-1), torch.ones(probs.size(0), device=probs.device), atol=1e-6):
         return False
 
     if A_type == Transitions.ERGODIC:
@@ -144,11 +145,11 @@ def validate_covars(
         return covars
 
     if covariance_type == CovarianceType.FULL:
-        valid_shape = (n_states, n_features, n_features)
+        expected_shape = (n_states, n_features, n_features)
         if n_components:
-            valid_shape = (n_states, n_components, n_features, n_features)
-        if covars.shape != valid_shape:
-            raise ValueError(f"'full' covars must have shape {valid_shape}")
+            expected_shape = (n_states, n_components, n_features, n_features)
+        if covars.shape != expected_shape:
+            raise ValueError(f"'full' covars must have shape {expected_shape}")
         flat = covars.view(-1, n_features, n_features)
         for i, mat in enumerate(flat):
             _assert_spd(mat, label=f"Covariance {i}")
@@ -169,16 +170,16 @@ def _assert_spd(matrix: torch.Tensor, label: str = "Matrix"):
 # -------------------------------------------------------------------------
 # Covariance initialization / expansion
 # -------------------------------------------------------------------------
-def init_covars(tied_cv: torch.Tensor, covariance_type: CovarianceType, n_states: int) -> torch.Tensor:
+def init_covars(base_cov: torch.Tensor, covariance_type: CovarianceType, n_states: int) -> torch.Tensor:
     """Expand a base covariance according to type."""
     if covariance_type == CovarianceType.SPHERICAL:
-        return tied_cv.mean().expand(n_states)
+        return base_cov.mean().expand(n_states)
     if covariance_type == CovarianceType.TIED:
-        return tied_cv
+        return base_cov
     if covariance_type == CovarianceType.DIAG:
-        return tied_cv.diag().unsqueeze(0).expand(n_states, -1)
+        return base_cov.diag().unsqueeze(0).expand(n_states, -1)
     if covariance_type == CovarianceType.FULL:
-        return tied_cv.unsqueeze(0).expand(n_states, -1, -1)
+        return base_cov.unsqueeze(0).expand(n_states, -1, -1)
     raise NotImplementedError(f"Unsupported covariance type: {covariance_type.value}")
 
 
@@ -187,7 +188,6 @@ def fill_covars(
     covariance_type: CovarianceType,
     n_states: int,
     n_features: int,
-    n_components: Optional[int] = None,
 ) -> torch.Tensor:
     """Return full (n_states, n_features, n_features) covariance matrices."""
     if covariance_type == CovarianceType.FULL:

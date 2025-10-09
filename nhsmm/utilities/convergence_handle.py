@@ -17,7 +17,7 @@ class ConvergenceHandler:
     tol : float
         Convergence tolerance for log-likelihood delta.
     post_conv_iter : int
-        Number of iterations to continue after convergence.
+        Number of iterations to continue after convergence before confirming.
     verbose : bool
         Print progress logs.
     callbacks : list of callables
@@ -30,8 +30,8 @@ class ConvergenceHandler:
         self,
         max_iter: int,
         n_init: int,
-        tol: float,
-        post_conv_iter: int,
+        tol: float = 1e-5,
+        post_conv_iter: int = 3,
         verbose: bool = True,
         callbacks: Optional[List[Callable]] = None,
         early_stop: bool = True,
@@ -59,12 +59,12 @@ class ConvergenceHandler:
 
     # ----------------------------------------------------------------------
 
-    def push_pull(self, new_score: torch.Tensor, iter: int, rank: int) -> bool:
+    def push_pull(self, new_score: float, iter: int, rank: int) -> bool:
         """Push a new score and immediately check convergence."""
         self.push(new_score, iter, rank)
         return self.check_converged(iter, rank)
 
-    def push(self, new_score: torch.Tensor, iter: int, rank: int):
+    def push(self, new_score: float, iter: int, rank: int):
         """Store a new log-likelihood score and compute delta."""
         score_val = float(new_score.detach().item() if torch.is_tensor(new_score) else new_score)
         self.score[iter, rank] = score_val
@@ -77,18 +77,17 @@ class ConvergenceHandler:
         valid_deltas = self.delta[1:iter + 1, rank]
         valid_deltas = valid_deltas[~torch.isnan(valid_deltas)]
 
+        self.is_converged = False
         if valid_deltas.numel() >= self.post_conv_iter:
             recent = valid_deltas[-self.post_conv_iter:]
             self.is_converged = torch.all(torch.abs(recent) < self.tol).item()
-        else:
-            self.is_converged = False
 
         # Print status
         if self.verbose:
             score = float(self.score[iter, rank])
             delta = float(self.delta[iter, rank]) if not torch.isnan(self.delta[iter, rank]) else float("nan")
             status = "✔️ Converged" if self.is_converged else ""
-            print(f"[Run {rank+1}] Iter {iter:03d} | Score: {score:.4f} | Δ: {delta:.6f} {status}")
+            print(f"[Run {rank+1}] Iter {iter:03d} | Score: {score:.6f} | Δ: {delta:.6f} {status}")
 
         # Callbacks
         self._trigger_callbacks(iter, rank)
@@ -102,7 +101,7 @@ class ConvergenceHandler:
     # ----------------------------------------------------------------------
 
     def _trigger_callbacks(self, iter: int, rank: int):
-        """Invoke all registered callbacks."""
+        """Invoke all registered callbacks safely."""
         score = float(self.score[iter, rank])
         delta_val = self.delta[iter, rank]
         delta = float(delta_val) if not torch.isnan(delta_val) else float("nan")
@@ -145,7 +144,7 @@ class ConvergenceHandler:
     # ----------------------------------------------------------------------
 
     def export_log(self, path: str):
-        """Export score and delta logs to JSON (safe for non-finite values)."""
+        """Export score and delta logs to JSON (handles non-finite values)."""
         data = {
             "max_iter": self.max_iter,
             "n_init": self.n_init,

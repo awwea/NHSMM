@@ -6,9 +6,9 @@ from .NeuralHSMM import NeuralHSMM
 
 
 __all__ = [
-    'MultinomialHSMM',
     'PoissonHSMM',
     'GaussianHSMM',
     'GaussianMixtureHSMM',
+    'MultinomialHSMM',
     'NeuralHSMM'
 ]
