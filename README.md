@@ -1,3 +1,5 @@
+# Switching to new project nhsmm (about more then 80% of refactored code): https://github.com/awwea/NeuralHSMM
+
 # Chad Hidden Markov Models (ChadHMM)
 [![GitHub license](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/drkostas/pyemail-sender/master/LICENSE)
 ![Downloads](https://img.shields.io/pypi/dm/chadhmm?color=purple)
